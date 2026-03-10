@@ -45,7 +45,7 @@ def create_issue(params):
         fields["components"] = normalize_components(comp_list)
 
     for cf in params.get("custom_fields", []):
-        fields[cf["field_id"]] = resolve_field_value(
+        fields[cf["field_id"]], _ = resolve_field_value(
             cf["value"], cf.get("field_type", "auto"), is_cloud=handler.is_cloud
         )
 
@@ -249,7 +249,7 @@ def set_custom_field(params):
     field_type = params.get("field_type", "auto")
     dry_run = params.get("dry_run", True)
 
-    field_value = resolve_field_value(value, field_type, is_cloud=handler.is_cloud)
+    field_value, field_type = resolve_field_value(value, field_type, is_cloud=handler.is_cloud)
 
     if dry_run:
         return {

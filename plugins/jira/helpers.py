@@ -175,6 +175,8 @@ def resolve_field_value(value, field_type, is_cloud=False):
 
     Handles type conversion for custom fields based on field_type:
     text, number, select, multi-select, version, user, or auto.
+
+    Returns (converted_value, resolved_field_type).
     """
     if field_type == "auto":
         if isinstance(value, (int, float)):
@@ -185,16 +187,16 @@ def resolve_field_value(value, field_type, is_cloud=False):
             field_type = "text"
 
     if field_type == "number":
-        return float(value)
+        return float(value), field_type
     elif field_type == "select":
-        return {"value": value}
+        return {"value": value}, field_type
     elif field_type == "multi-select":
         values = value if isinstance(value, list) else [value]
-        return [{"value": v} for v in values]
+        return [{"value": v} for v in values], field_type
     elif field_type == "version":
         values = value if isinstance(value, list) else [value]
-        return [{"name": v} for v in values]
+        return [{"name": v} for v in values], field_type
     elif field_type == "user":
-        return {"accountId": value} if is_cloud else {"name": value}
+        return ({"accountId": value} if is_cloud else {"name": value}), field_type
     else:
-        return value
+        return value, field_type
