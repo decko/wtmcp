@@ -45,9 +45,13 @@ def create_issue(params):
         fields["components"] = normalize_components(comp_list)
 
     for cf in params.get("custom_fields", []):
-        fields[cf["field_id"]], _ = resolve_field_value(
-            cf["value"], cf.get("field_type", "auto"), is_cloud=handler.is_cloud
-        )
+        cf_id = cf["field_id"]
+        if not cf_id.startswith("customfield_"):
+            raise ValueError(
+                f"Invalid custom field ID: '{cf_id}' (must start with 'customfield_'). "
+                "Use the standard parameters for built-in fields."
+            )
+        fields[cf_id], _ = resolve_field_value(cf["value"], cf.get("field_type", "auto"), is_cloud=handler.is_cloud)
 
     if dry_run:
         return {"dry_run": True, "action": "jira_create_issue", "fields": fields}
