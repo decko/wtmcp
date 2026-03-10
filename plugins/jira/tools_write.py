@@ -4,7 +4,7 @@ All write tools default to dry_run=true for safety.
 """
 
 import handler
-from helpers import normalize_components, text_to_adf, validate_issue_key
+from helpers import normalize_components, resolve_field_value, text_to_adf, validate_issue_key
 
 
 def create_issue(params):
@@ -43,6 +43,11 @@ def create_issue(params):
     if components:
         comp_list = components if isinstance(components, list) else [components]
         fields["components"] = normalize_components(comp_list)
+
+    for cf in params.get("custom_fields", []):
+        fields[cf["field_id"]] = resolve_field_value(
+            cf["value"], cf.get("field_type", "auto"), is_cloud=handler.is_cloud
+        )
 
     if dry_run:
         return {"dry_run": True, "action": "jira_create_issue", "fields": fields}
@@ -244,29 +249,7 @@ def set_custom_field(params):
     field_type = params.get("field_type", "auto")
     dry_run = params.get("dry_run", True)
 
-    # Type conversion
-    if field_type == "auto":
-        if isinstance(value, (int, float)):
-            field_type = "number"
-        elif isinstance(value, list):
-            field_type = "multi-select"
-        else:
-            field_type = "text"
-
-    if field_type == "number":
-        field_value = float(value)
-    elif field_type == "select":
-        field_value = {"value": value}
-    elif field_type == "multi-select":
-        values = value if isinstance(value, list) else [value]
-        field_value = [{"value": v} for v in values]
-    elif field_type == "version":
-        values = value if isinstance(value, list) else [value]
-        field_value = [{"name": v} for v in values]
-    elif field_type == "user":
-        field_value = {"accountId": value} if handler.is_cloud else {"name": value}
-    else:
-        field_value = value
+    field_value = resolve_field_value(value, field_type, is_cloud=handler.is_cloud)
 
     if dry_run:
         return {

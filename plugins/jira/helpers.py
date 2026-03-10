@@ -168,3 +168,33 @@ def extract_user_fields(user):
         "active": user.get("active"),
         "timeZone": user.get("timeZone"),
     }
+
+
+def resolve_field_value(value, field_type, is_cloud=False):
+    """Convert a value to the appropriate Jira field format.
+
+    Handles type conversion for custom fields based on field_type:
+    text, number, select, multi-select, version, user, or auto.
+    """
+    if field_type == "auto":
+        if isinstance(value, (int, float)):
+            field_type = "number"
+        elif isinstance(value, list):
+            field_type = "multi-select"
+        else:
+            field_type = "text"
+
+    if field_type == "number":
+        return float(value)
+    elif field_type == "select":
+        return {"value": value}
+    elif field_type == "multi-select":
+        values = value if isinstance(value, list) else [value]
+        return [{"value": v} for v in values]
+    elif field_type == "version":
+        values = value if isinstance(value, list) else [value]
+        return [{"name": v} for v in values]
+    elif field_type == "user":
+        return {"accountId": value} if is_cloud else {"name": value}
+    else:
+        return value
