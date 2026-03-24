@@ -16,6 +16,7 @@ def create_issue(params):
     assignee = params.get("assignee")
     priority = params.get("priority")
     labels = params.get("labels")
+    parent = params.get("parent")
     components = params.get("components")
     dry_run = params.get("dry_run", True)
 
@@ -39,6 +40,9 @@ def create_issue(params):
 
     if labels:
         fields["labels"] = labels if isinstance(labels, list) else [labels]
+
+    if parent:
+        fields["parent"] = {"key": validate_issue_key(parent)}
 
     if components:
         comp_list = components if isinstance(components, list) else [components]

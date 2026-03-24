@@ -170,6 +170,9 @@ tools:
         items:
           type: string
         description: "List of labels"
+      parent:
+        type: string
+        description: "Parent issue key (e.g. PROJ-100) to create this issue as a child"
       components:
         type: array
         items:

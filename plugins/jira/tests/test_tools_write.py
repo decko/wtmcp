@@ -79,6 +79,44 @@ class TestCreateIssue:
             assert "error" in result
             assert result["status"] == 400
 
+    def test_parent_dry_run(self):
+        result = tools_write.create_issue(
+            {
+                "project": "PROJ",
+                "issue_type": "Sub-task",
+                "summary": "Child issue",
+                "parent": "PROJ-100",
+                "dry_run": True,
+            }
+        )
+        assert result["fields"]["parent"] == {"key": "PROJ-100"}
+
+    def test_parent_create_success(self):
+        resp = {"key": "PROJ-124", "id": "10002", "self": "https://jira/issue/10002"}
+        with _mock_http(201, resp):
+            result = tools_write.create_issue(
+                {
+                    "project": "PROJ",
+                    "issue_type": "Sub-task",
+                    "summary": "Child",
+                    "parent": "PROJ-100",
+                    "dry_run": False,
+                }
+            )
+            assert result["key"] == "PROJ-124"
+
+    def test_parent_invalid_key_raises(self):
+        with pytest.raises(ValueError):
+            tools_write.create_issue(
+                {
+                    "project": "PROJ",
+                    "issue_type": "Sub-task",
+                    "summary": "Child",
+                    "parent": "invalid",
+                    "dry_run": True,
+                }
+            )
+
     def test_cloud_description_uses_adf(self):
         with patch.object(handler, "is_cloud", True):
             result = tools_write.create_issue(
