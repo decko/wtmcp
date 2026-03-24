@@ -214,6 +214,39 @@ class TestTextToAdf:
         result = text_to_adf(None)
         assert result["content"] == [{"type": "paragraph", "content": []}]
 
+    def test_adf_dict_passthrough(self):
+        adf = {
+            "version": 1,
+            "type": "doc",
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Pre-built"}]}],
+        }
+        result = text_to_adf(adf)
+        assert result is adf
+
+    def test_adf_json_string_passthrough(self):
+        import json
+
+        adf = {
+            "version": 1,
+            "type": "doc",
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": "From JSON"}]}],
+        }
+        result = text_to_adf(json.dumps(adf))
+        assert result == adf
+
+    def test_invalid_adf_dict_raises(self):
+        with pytest.raises(ValueError, match="Invalid ADF dict"):
+            text_to_adf({"type": "not_doc", "version": 1})
+
+    def test_empty_dict_treated_as_empty(self):
+        result = text_to_adf({})
+        assert result["content"] == [{"type": "paragraph", "content": []}]
+
+    def test_non_adf_json_string_treated_as_text(self):
+        result = text_to_adf('{"key": "value"}')
+        assert result["type"] == "doc"
+        assert result["content"][0]["content"][0]["text"] == '{"key": "value"}'
+
 
 # --- normalize_components ---
 

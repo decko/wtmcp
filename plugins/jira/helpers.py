@@ -3,6 +3,7 @@
 Pure utility functions with no protocol or I/O dependencies.
 """
 
+import json
 import math
 import re
 
@@ -76,13 +77,36 @@ def text_to_adf(text):
     """Convert plain text to Atlassian Document Format (ADF).
 
     Jira Cloud API v3 requires comment/description bodies in ADF.
-    Splits on newlines into paragraphs.
+    Accepts plain text (split into paragraphs), pre-built ADF dicts
+    (passed through after validation), or JSON-encoded ADF strings
+    (parsed and validated).
+
+    Raises ValueError if a dict is passed that isn't valid ADF.
     """
+    # Already a valid ADF dict — pass through
+    if isinstance(text, dict):
+        if not text:
+            pass  # fall through to empty handling below
+        elif text.get("type") == "doc" and text.get("version") == 1:
+            return text
+        else:
+            raise ValueError("Invalid ADF dict: must have 'type': 'doc' and 'version': 1")
+
     if not text:
         return {"version": 1, "type": "doc", "content": [{"type": "paragraph", "content": []}]}
 
+    # Check if the string is a JSON-encoded ADF document
+    if isinstance(text, str):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict) and parsed.get("type") == "doc" and parsed.get("version") == 1:
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Plain text — split into paragraphs
     content = []
-    for para in text.split("\n"):
+    for para in str(text).split("\n"):
         if para.strip():
             content.append({"type": "paragraph", "content": [{"type": "text", "text": para}]})
         else:
