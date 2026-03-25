@@ -11,6 +11,50 @@ _ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]+-\d+$")
 
 _USER_ALIASES = frozenset({"me", "myself", "currentuser"})
 
+# --- Wiki markup regex patterns (compiled at module level) ---
+
+_WIKI_HEADING_RE = re.compile(r"^h([1-6])\.\s+(.*)")
+_WIKI_LIST_UL_RE = re.compile(r"^(\*+)\s+(.*)")
+_WIKI_LIST_OL_RE = re.compile(r"^(#+)\s+(.*)")
+_WIKI_CODE_START_RE = re.compile(r"^\{code(?::(\w+))?\}\s*$")
+_WIKI_CODE_END_RE = re.compile(r"^\{code\}\s*$")
+_WIKI_QUOTE_START_RE = re.compile(r"^\{quote\}\s*$")
+_WIKI_QUOTE_END_RE = re.compile(r"^\{quote\}\s*$")
+_WIKI_BQ_RE = re.compile(r"^bq\.\s+(.*)")
+_WIKI_RULE_RE = re.compile(r"^----\s*$")
+_WIKI_TABLE_HEADER_RE = re.compile(r"^\|\|")
+_WIKI_TABLE_ROW_RE = re.compile(r"^\|[^|]")
+_WIKI_PANEL_START_RE = re.compile(r"^\{panel(?::([^}]*))?\}\s*$")
+_WIKI_PANEL_END_RE = re.compile(r"^\{panel\}\s*$")
+
+_WIKI_BLOCK_DETECT_RE = re.compile(
+    r"(?m)"
+    r"(?:^h[1-6]\.\s)"
+    r"|(?:^\*+\s)"
+    r"|(?:^#+\s)"
+    r"|(?:^\{code(?::|\}))"
+    r"|(?:^\{quote\})"
+    r"|(?:^\{panel(?::|\}))"
+    r"|(?:^bq\.\s)"
+    r"|(?:^----\s*$)"
+    r"|(?:^\|\|)"
+)
+
+_WIKI_INLINE_RE = re.compile(
+    r"(?P<monospace>\{\{(.+?)\}\})"
+    r"|(?P<link>\[(?P<link_text>[^]|~]*)\|(?P<link_url>[^]]+)\])"
+    r"|(?P<bare_link>\[(?P<bare_url>https?://[^]]+)\])"
+    r"|(?P<mention>\[~(?P<mention_id>[^]]+)\])"
+    r"|(?P<image>!(?P<image_url>\S+?)!)"
+    r"|(?P<bold>\*(?=\S)(?P<bold_text>.+?)(?<=\S)\*)"
+    r"|(?P<italic>_(?=\S)(?P<italic_text>.+?)(?<=\S)_)"
+    r"|(?P<strike>-(?=\S)(?P<strike_text>.+?)(?<=\S)-)"
+    r"|(?P<underline>\+(?=\S)(?P<underline_text>.+?)(?<=\S)\+)"
+    r"|(?P<sup>\^(?P<sup_text>.+?)\^)"
+    r"|(?P<sub>~(?P<sub_text>.+?)~)"
+    r"|(?P<linebreak>\\\\)"
+)
+
 
 def http_error(status, body):
     """Build a compact error dict from an HTTP error response.
@@ -73,6 +117,347 @@ def extract_brief_issue(issue):
     }
 
 
+def _looks_like_wiki_markup(text):
+    """Check if text contains Jira wiki markup patterns.
+
+    Uses block-level patterns only to avoid false positives from
+    inline characters like * or _ in plain text.
+    """
+    return bool(_WIKI_BLOCK_DETECT_RE.search(text))
+
+
+def _parse_inline_markup(text):
+    """Parse inline wiki markup into ADF inline nodes.
+
+    Returns a list of ADF inline nodes (text with marks, mentions,
+    hard breaks, etc.).
+    """
+    if not text:
+        return []
+
+    nodes = []
+    last_end = 0
+
+    for m in _WIKI_INLINE_RE.finditer(text):
+        # Emit plain text before this match
+        if m.start() > last_end:
+            nodes.append({"type": "text", "text": text[last_end : m.start()]})
+
+        if m.group("monospace"):
+            nodes.append({"type": "text", "text": m.group(2), "marks": [{"type": "code"}]})
+        elif m.group("link"):
+            link_text = m.group("link_text")
+            link_url = m.group("link_url")
+            nodes.append({"type": "text", "text": link_text, "marks": [{"type": "link", "attrs": {"href": link_url}}]})
+        elif m.group("bare_link"):
+            url = m.group("bare_url")
+            nodes.append({"type": "text", "text": url, "marks": [{"type": "link", "attrs": {"href": url}}]})
+        elif m.group("mention"):
+            nodes.append({"type": "mention", "attrs": {"id": m.group("mention_id")}})
+        elif m.group("image"):
+            url = m.group("image_url")
+            nodes.append({"type": "text", "text": url, "marks": [{"type": "link", "attrs": {"href": url}}]})
+        elif m.group("bold"):
+            nodes.append({"type": "text", "text": m.group("bold_text"), "marks": [{"type": "strong"}]})
+        elif m.group("italic"):
+            nodes.append({"type": "text", "text": m.group("italic_text"), "marks": [{"type": "em"}]})
+        elif m.group("strike"):
+            nodes.append({"type": "text", "text": m.group("strike_text"), "marks": [{"type": "strike"}]})
+        elif m.group("underline"):
+            nodes.append({"type": "text", "text": m.group("underline_text"), "marks": [{"type": "underline"}]})
+        elif m.group("sup"):
+            nodes.append(
+                {"type": "text", "text": m.group("sup_text"), "marks": [{"type": "subsup", "attrs": {"type": "sup"}}]}
+            )
+        elif m.group("sub"):
+            nodes.append(
+                {"type": "text", "text": m.group("sub_text"), "marks": [{"type": "subsup", "attrs": {"type": "sub"}}]}
+            )
+        elif m.group("linebreak"):
+            nodes.append({"type": "hardBreak"})
+
+        last_end = m.end()
+
+    # Emit trailing plain text
+    if last_end < len(text):
+        nodes.append({"type": "text", "text": text[last_end:]})
+
+    return nodes
+
+
+def _build_list_tree(items, list_type):
+    """Build a nested ADF list from (depth, text) tuples.
+
+    list_type is "bulletList" or "orderedList".
+    """
+
+    def _build(items, current_depth):
+        list_items = []
+        i = 0
+        while i < len(items):
+            depth, text = items[i]
+            if depth == current_depth:
+                content = [{"type": "paragraph", "content": _parse_inline_markup(text)}]
+                i += 1
+                # Collect deeper items as children
+                children = []
+                while i < len(items) and items[i][0] > current_depth:
+                    children.append(items[i])
+                    i += 1
+                if children:
+                    content.append(_build(children, current_depth + 1))
+                list_items.append({"type": "listItem", "content": content})
+            elif depth > current_depth:
+                # Orphaned deeper items — wrap in a list item
+                children = []
+                while i < len(items) and items[i][0] > current_depth:
+                    children.append(items[i])
+                    i += 1
+                if children:
+                    nested = _build(children, children[0][0])
+                    list_items.append({"type": "listItem", "content": [nested]})
+            else:
+                break
+        return {"type": list_type, "content": list_items}
+
+    return _build(items, items[0][0] if items else 1)
+
+
+def _parse_table_rows(lines):
+    """Parse consecutive table lines into an ADF table node."""
+    rows = []
+    for line in lines:
+        is_header = line.startswith("||")
+        if is_header:
+            # Split on || but skip empty first/last from leading/trailing ||
+            raw = line.strip()
+            if raw.startswith("||"):
+                raw = raw[2:]
+            if raw.endswith("||"):
+                raw = raw[:-2]
+            cells = [c.strip() for c in raw.split("||")]
+            cell_type = "tableHeader"
+        else:
+            raw = line.strip()
+            if raw.startswith("|"):
+                raw = raw[1:]
+            if raw.endswith("|"):
+                raw = raw[:-1]
+            cells = [c.strip() for c in raw.split("|")]
+            cell_type = "tableCell"
+
+        row_content = []
+        for cell_text in cells:
+            row_content.append(
+                {"type": cell_type, "content": [{"type": "paragraph", "content": _parse_inline_markup(cell_text)}]}
+            )
+        rows.append({"type": "tableRow", "content": row_content})
+
+    return {"type": "table", "content": rows}
+
+
+def _parse_wiki_blocks(text):
+    """Parse wiki markup text into a list of ADF block nodes.
+
+    Uses a line-by-line state machine for block-level constructs,
+    then applies inline parsing to text content.
+    """
+    lines = text.split("\n")
+    blocks = []
+    para_buffer = []
+    state = "NORMAL"  # NORMAL, CODE, QUOTE, PANEL
+    block_buffer = []
+    code_lang = None
+
+    def _flush_para():
+        if para_buffer:
+            combined = "\n".join(para_buffer).strip()
+            if combined:
+                blocks.append({"type": "paragraph", "content": _parse_inline_markup(combined)})
+            para_buffer.clear()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        if state == "CODE":
+            if _WIKI_CODE_END_RE.match(line):
+                attrs = {}
+                if code_lang:
+                    attrs["language"] = code_lang
+                node = {"type": "codeBlock", "content": [{"type": "text", "text": "\n".join(block_buffer)}]}
+                if attrs:
+                    node["attrs"] = attrs
+                blocks.append(node)
+                block_buffer.clear()
+                state = "NORMAL"
+            else:
+                block_buffer.append(line)
+            i += 1
+            continue
+
+        if state == "QUOTE":
+            if _WIKI_QUOTE_END_RE.match(line):
+                inner = "\n".join(block_buffer)
+                inner_blocks = _parse_wiki_blocks(inner) if inner.strip() else []
+                if not inner_blocks:
+                    inner_blocks = [{"type": "paragraph", "content": []}]
+                blocks.append({"type": "blockquote", "content": inner_blocks})
+                block_buffer.clear()
+                state = "NORMAL"
+            else:
+                block_buffer.append(line)
+            i += 1
+            continue
+
+        if state == "PANEL":
+            if _WIKI_PANEL_END_RE.match(line):
+                inner = "\n".join(block_buffer)
+                inner_blocks = _parse_wiki_blocks(inner) if inner.strip() else []
+                if not inner_blocks:
+                    inner_blocks = [{"type": "paragraph", "content": []}]
+                node = {"type": "panel", "attrs": {"panelType": "info"}, "content": inner_blocks}
+                blocks.append(node)
+                block_buffer.clear()
+                state = "NORMAL"
+            else:
+                block_buffer.append(line)
+            i += 1
+            continue
+
+        # --- NORMAL state ---
+
+        # Code block start
+        m = _WIKI_CODE_START_RE.match(line)
+        if m:
+            _flush_para()
+            code_lang = m.group(1)
+            state = "CODE"
+            i += 1
+            continue
+
+        # Quote block start
+        if _WIKI_QUOTE_START_RE.match(line):
+            _flush_para()
+            state = "QUOTE"
+            i += 1
+            continue
+
+        # Panel start
+        m = _WIKI_PANEL_START_RE.match(line)
+        if m:
+            _flush_para()
+            state = "PANEL"
+            i += 1
+            continue
+
+        # Heading
+        m = _WIKI_HEADING_RE.match(line)
+        if m:
+            _flush_para()
+            level = int(m.group(1))
+            heading_text = m.group(2).strip()
+            blocks.append(
+                {"type": "heading", "attrs": {"level": level}, "content": _parse_inline_markup(heading_text)}
+            )
+            i += 1
+            continue
+
+        # Horizontal rule
+        if _WIKI_RULE_RE.match(line):
+            _flush_para()
+            blocks.append({"type": "rule"})
+            i += 1
+            continue
+
+        # Blockquote shorthand
+        m = _WIKI_BQ_RE.match(line)
+        if m:
+            _flush_para()
+            blocks.append(
+                {
+                    "type": "blockquote",
+                    "content": [{"type": "paragraph", "content": _parse_inline_markup(m.group(1))}],
+                }
+            )
+            i += 1
+            continue
+
+        # Unordered list
+        m = _WIKI_LIST_UL_RE.match(line)
+        if m:
+            _flush_para()
+            items = []
+            while i < len(lines):
+                lm = _WIKI_LIST_UL_RE.match(lines[i])
+                if not lm:
+                    break
+                items.append((len(lm.group(1)), lm.group(2)))
+                i += 1
+            blocks.append(_build_list_tree(items, "bulletList"))
+            continue
+
+        # Ordered list
+        m = _WIKI_LIST_OL_RE.match(line)
+        if m:
+            _flush_para()
+            items = []
+            while i < len(lines):
+                lm = _WIKI_LIST_OL_RE.match(lines[i])
+                if not lm:
+                    break
+                items.append((len(lm.group(1)), lm.group(2)))
+                i += 1
+            blocks.append(_build_list_tree(items, "orderedList"))
+            continue
+
+        # Table
+        if _WIKI_TABLE_HEADER_RE.match(line) or _WIKI_TABLE_ROW_RE.match(line):
+            _flush_para()
+            table_lines = []
+            while i < len(lines) and (_WIKI_TABLE_HEADER_RE.match(lines[i]) or _WIKI_TABLE_ROW_RE.match(lines[i])):
+                table_lines.append(lines[i])
+                i += 1
+            blocks.append(_parse_table_rows(table_lines))
+            continue
+
+        # Regular text — accumulate into paragraph
+        if line.strip():
+            para_buffer.append(line)
+        else:
+            _flush_para()
+        i += 1
+
+    # Handle unclosed blocks
+    if state == "CODE":
+        attrs = {}
+        if code_lang:
+            attrs["language"] = code_lang
+        node = {"type": "codeBlock", "content": [{"type": "text", "text": "\n".join(block_buffer)}]}
+        if attrs:
+            node["attrs"] = attrs
+        blocks.append(node)
+    elif state == "QUOTE":
+        inner = "\n".join(block_buffer)
+        inner_blocks = _parse_wiki_blocks(inner) if inner.strip() else [{"type": "paragraph", "content": []}]
+        blocks.append({"type": "blockquote", "content": inner_blocks})
+    elif state == "PANEL":
+        inner = "\n".join(block_buffer)
+        inner_blocks = _parse_wiki_blocks(inner) if inner.strip() else [{"type": "paragraph", "content": []}]
+        blocks.append({"type": "panel", "attrs": {"panelType": "info"}, "content": inner_blocks})
+
+    _flush_para()
+    return blocks
+
+
+def wiki_to_adf(text):
+    """Convert Jira wiki markup text to an ADF document."""
+    blocks = _parse_wiki_blocks(text)
+    if not blocks:
+        blocks = [{"type": "paragraph", "content": []}]
+    return {"version": 1, "type": "doc", "content": blocks}
+
+
 def text_to_adf(text: str | dict | None) -> dict:
     """Convert plain text to Atlassian Document Format (ADF).
 
@@ -108,6 +493,10 @@ def text_to_adf(text: str | dict | None) -> dict:
                 return parsed
         except (json.JSONDecodeError, ValueError):
             pass
+
+    # Wiki markup detection — convert before plain text fallback
+    if isinstance(text, str) and _looks_like_wiki_markup(text):
+        return wiki_to_adf(text)
 
     # Plain text — split into paragraphs
     content = []

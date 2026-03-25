@@ -1,7 +1,11 @@
 """Unit tests for helpers.py — pure functions, no mocking needed."""
 
+import json
+
 import pytest
 from helpers import (
+    _looks_like_wiki_markup,
+    _parse_inline_markup,
     adf_to_text,
     calculate_sprint_metrics,
     escape_jql,
@@ -16,6 +20,7 @@ from helpers import (
     resolve_field_value,
     text_to_adf,
     validate_issue_key,
+    wiki_to_adf,
 )
 
 # --- validate_issue_key ---
@@ -224,8 +229,6 @@ class TestTextToAdf:
         assert result is adf
 
     def test_adf_json_string_passthrough(self):
-        import json
-
         adf = {
             "version": 1,
             "type": "doc",
@@ -627,3 +630,358 @@ class TestAdfToText:
         """Dict without type=doc passes through unchanged."""
         not_adf = {"key": "value", "foo": "bar"}
         assert adf_to_text(not_adf) == not_adf
+
+
+# --- Wiki markup detection ---
+
+
+class TestLooksLikeWikiMarkup:
+    def test_heading(self):
+        assert _looks_like_wiki_markup("h2. Title")
+
+    def test_heading_h1(self):
+        assert _looks_like_wiki_markup("h1. Main Title")
+
+    def test_heading_h6(self):
+        assert _looks_like_wiki_markup("h6. Deep heading")
+
+    def test_unordered_list(self):
+        assert _looks_like_wiki_markup("* item one")
+
+    def test_ordered_list(self):
+        assert _looks_like_wiki_markup("# first item")
+
+    def test_code_block(self):
+        assert _looks_like_wiki_markup("{code}\nprint('hi')\n{code}")
+
+    def test_code_block_with_lang(self):
+        assert _looks_like_wiki_markup("{code:python}\nx = 1\n{code}")
+
+    def test_quote_block(self):
+        assert _looks_like_wiki_markup("{quote}\nsome quote\n{quote}")
+
+    def test_bq_shorthand(self):
+        assert _looks_like_wiki_markup("bq. Some quoted text")
+
+    def test_panel(self):
+        assert _looks_like_wiki_markup("{panel}\ncontent\n{panel}")
+
+    def test_horizontal_rule(self):
+        assert _looks_like_wiki_markup("----")
+
+    def test_table_header(self):
+        assert _looks_like_wiki_markup("||H1||H2||")
+
+    def test_plain_text(self):
+        assert not _looks_like_wiki_markup("Just some regular text")
+
+    def test_plain_with_asterisk_mid_sentence(self):
+        assert not _looks_like_wiki_markup("This is a * note about things")
+
+    def test_json_not_wiki(self):
+        assert not _looks_like_wiki_markup('{"key": "value"}')
+
+    def test_multiline_with_heading(self):
+        assert _looks_like_wiki_markup("Some intro\nh2. Title\nMore text")
+
+
+# --- Inline markup parsing ---
+
+
+class TestParseInlineMarkup:
+    def test_plain_text(self):
+        nodes = _parse_inline_markup("just plain text")
+        assert len(nodes) == 1
+        assert nodes[0] == {"type": "text", "text": "just plain text"}
+
+    def test_bold(self):
+        nodes = _parse_inline_markup("*bold*")
+        assert len(nodes) == 1
+        assert nodes[0]["text"] == "bold"
+        assert nodes[0]["marks"] == [{"type": "strong"}]
+
+    def test_italic(self):
+        nodes = _parse_inline_markup("_italic_")
+        assert nodes[0]["text"] == "italic"
+        assert nodes[0]["marks"] == [{"type": "em"}]
+
+    def test_strikethrough(self):
+        nodes = _parse_inline_markup("-struck-")
+        assert nodes[0]["text"] == "struck"
+        assert nodes[0]["marks"] == [{"type": "strike"}]
+
+    def test_underline(self):
+        nodes = _parse_inline_markup("+under+")
+        assert nodes[0]["text"] == "under"
+        assert nodes[0]["marks"] == [{"type": "underline"}]
+
+    def test_monospace(self):
+        nodes = _parse_inline_markup("{{code}}")
+        assert nodes[0]["text"] == "code"
+        assert nodes[0]["marks"] == [{"type": "code"}]
+
+    def test_superscript(self):
+        nodes = _parse_inline_markup("^sup^")
+        assert nodes[0]["text"] == "sup"
+        assert nodes[0]["marks"] == [{"type": "subsup", "attrs": {"type": "sup"}}]
+
+    def test_subscript(self):
+        nodes = _parse_inline_markup("~sub~")
+        assert nodes[0]["text"] == "sub"
+        assert nodes[0]["marks"] == [{"type": "subsup", "attrs": {"type": "sub"}}]
+
+    def test_link_with_text(self):
+        nodes = _parse_inline_markup("[Example|https://example.com]")
+        assert nodes[0]["text"] == "Example"
+        assert nodes[0]["marks"] == [{"type": "link", "attrs": {"href": "https://example.com"}}]
+
+    def test_bare_link(self):
+        nodes = _parse_inline_markup("[https://example.com]")
+        assert nodes[0]["text"] == "https://example.com"
+        assert nodes[0]["marks"] == [{"type": "link", "attrs": {"href": "https://example.com"}}]
+
+    def test_mention(self):
+        nodes = _parse_inline_markup("[~abc123]")
+        assert nodes[0] == {"type": "mention", "attrs": {"id": "abc123"}}
+
+    def test_image_as_link(self):
+        nodes = _parse_inline_markup("!screenshot.png!")
+        assert nodes[0]["text"] == "screenshot.png"
+        assert nodes[0]["marks"][0]["type"] == "link"
+
+    def test_linebreak(self):
+        nodes = _parse_inline_markup("before\\\\after")
+        assert nodes[0] == {"type": "text", "text": "before"}
+        assert nodes[1] == {"type": "hardBreak"}
+        assert nodes[2] == {"type": "text", "text": "after"}
+
+    def test_mixed_inline(self):
+        nodes = _parse_inline_markup("Hello *bold* and _italic_")
+        texts = [(n.get("text", ""), n.get("marks", [])) for n in nodes]
+        assert texts[0] == ("Hello ", [])
+        assert texts[1] == ("bold", [{"type": "strong"}])
+        assert texts[2] == (" and ", [])
+        assert texts[3] == ("italic", [{"type": "em"}])
+
+    def test_empty_string(self):
+        assert _parse_inline_markup("") == []
+
+
+# --- Wiki to ADF block parsing ---
+
+
+class TestWikiToAdf:
+    # Headings
+    def test_heading_h1(self):
+        result = wiki_to_adf("h1. Title")
+        block = result["content"][0]
+        assert block["type"] == "heading"
+        assert block["attrs"]["level"] == 1
+        assert block["content"][0]["text"] == "Title"
+
+    def test_heading_h6(self):
+        result = wiki_to_adf("h6. Deep")
+        assert result["content"][0]["attrs"]["level"] == 6
+
+    def test_heading_with_inline(self):
+        result = wiki_to_adf("h2. *Bold* title")
+        content = result["content"][0]["content"]
+        assert content[0]["marks"] == [{"type": "strong"}]
+        assert content[0]["text"] == "Bold"
+        assert content[1]["text"] == " title"
+
+    # Lists
+    def test_unordered_list(self):
+        result = wiki_to_adf("* item1\n* item2")
+        block = result["content"][0]
+        assert block["type"] == "bulletList"
+        assert len(block["content"]) == 2
+        assert block["content"][0]["type"] == "listItem"
+
+    def test_ordered_list(self):
+        result = wiki_to_adf("# first\n# second")
+        block = result["content"][0]
+        assert block["type"] == "orderedList"
+        assert len(block["content"]) == 2
+
+    def test_nested_unordered_list(self):
+        result = wiki_to_adf("* top\n** nested\n* bottom")
+        block = result["content"][0]
+        assert block["type"] == "bulletList"
+        # First item should have nested list
+        first_item = block["content"][0]
+        assert len(first_item["content"]) == 2  # paragraph + nested list
+        assert first_item["content"][1]["type"] == "bulletList"
+
+    def test_nested_ordered_list(self):
+        result = wiki_to_adf("# top\n## nested")
+        block = result["content"][0]
+        first_item = block["content"][0]
+        assert first_item["content"][1]["type"] == "orderedList"
+
+    # Code blocks
+    def test_code_block_no_lang(self):
+        result = wiki_to_adf("{code}\nprint('hi')\n{code}")
+        block = result["content"][0]
+        assert block["type"] == "codeBlock"
+        assert block["content"][0]["text"] == "print('hi')"
+        assert "attrs" not in block
+
+    def test_code_block_with_lang(self):
+        result = wiki_to_adf("{code:python}\nx = 1\n{code}")
+        block = result["content"][0]
+        assert block["type"] == "codeBlock"
+        assert block["attrs"]["language"] == "python"
+        assert block["content"][0]["text"] == "x = 1"
+
+    def test_code_block_multiline(self):
+        result = wiki_to_adf("{code}\nline1\nline2\nline3\n{code}")
+        assert result["content"][0]["content"][0]["text"] == "line1\nline2\nline3"
+
+    def test_code_block_unclosed(self):
+        result = wiki_to_adf("{code}\nsome code")
+        block = result["content"][0]
+        assert block["type"] == "codeBlock"
+        assert block["content"][0]["text"] == "some code"
+
+    # Blockquotes
+    def test_bq_shorthand(self):
+        result = wiki_to_adf("bq. Some quote")
+        block = result["content"][0]
+        assert block["type"] == "blockquote"
+        assert block["content"][0]["type"] == "paragraph"
+
+    def test_quote_block(self):
+        result = wiki_to_adf("{quote}\nquoted text\n{quote}")
+        block = result["content"][0]
+        assert block["type"] == "blockquote"
+        assert block["content"][0]["content"][0]["text"] == "quoted text"
+
+    def test_quote_block_unclosed(self):
+        result = wiki_to_adf("{quote}\nunclosed quote")
+        assert result["content"][0]["type"] == "blockquote"
+
+    # Horizontal rule
+    def test_horizontal_rule(self):
+        result = wiki_to_adf("----")
+        assert result["content"][0]["type"] == "rule"
+
+    # Tables
+    def test_simple_table(self):
+        result = wiki_to_adf("||H1||H2||\n|c1|c2|")
+        table = result["content"][0]
+        assert table["type"] == "table"
+        assert len(table["content"]) == 2
+        # Header row
+        header_row = table["content"][0]
+        assert header_row["content"][0]["type"] == "tableHeader"
+        # Data row
+        data_row = table["content"][1]
+        assert data_row["content"][0]["type"] == "tableCell"
+
+    def test_table_header_content(self):
+        result = wiki_to_adf("||Name||Age||")
+        row = result["content"][0]["content"][0]
+        cells = row["content"]
+        assert cells[0]["content"][0]["content"][0]["text"] == "Name"
+        assert cells[1]["content"][0]["content"][0]["text"] == "Age"
+
+    def test_table_with_inline_markup(self):
+        result = wiki_to_adf("||*Bold Header*||Plain||")
+        cell = result["content"][0]["content"][0]["content"][0]
+        para_content = cell["content"][0]["content"]
+        assert para_content[0]["marks"] == [{"type": "strong"}]
+
+    # Panel
+    def test_panel(self):
+        result = wiki_to_adf("{panel}\ncontent here\n{panel}")
+        block = result["content"][0]
+        assert block["type"] == "panel"
+        assert block["attrs"]["panelType"] == "info"
+        assert block["content"][0]["content"][0]["text"] == "content here"
+
+    def test_panel_unclosed(self):
+        result = wiki_to_adf("{panel}\nunclosed panel")
+        assert result["content"][0]["type"] == "panel"
+
+    # Mixed content
+    def test_heading_then_paragraph(self):
+        result = wiki_to_adf("h2. Title\n\nSome text")
+        assert result["content"][0]["type"] == "heading"
+        assert result["content"][1]["type"] == "paragraph"
+        assert result["content"][1]["content"][0]["text"] == "Some text"
+
+    def test_complex_document(self):
+        doc = """h1. Project Overview
+
+This is the *introduction*.
+
+h2. Tasks
+
+* Task one
+* Task two
+** Sub-task
+
+h2. Code
+
+{code:python}
+def hello():
+    print("world")
+{code}
+
+----
+
+bq. Important note here"""
+        result = wiki_to_adf(doc)
+        types = [b["type"] for b in result["content"]]
+        assert "heading" in types
+        assert "paragraph" in types
+        assert "bulletList" in types
+        assert "codeBlock" in types
+        assert "rule" in types
+        assert "blockquote" in types
+
+    def test_empty_input(self):
+        result = wiki_to_adf("")
+        assert result["content"] == [{"type": "paragraph", "content": []}]
+
+    def test_version_and_type(self):
+        result = wiki_to_adf("h1. Test")
+        assert result["version"] == 1
+        assert result["type"] == "doc"
+
+
+# --- Integration: text_to_adf with wiki markup ---
+
+
+class TestTextToAdfWikiIntegration:
+    def test_wiki_heading_converted(self):
+        result = text_to_adf("h2. Title\n\nSome paragraph")
+        assert result["type"] == "doc"
+        assert result["content"][0]["type"] == "heading"
+
+    def test_wiki_list_converted(self):
+        result = text_to_adf("* item 1\n* item 2")
+        assert result["content"][0]["type"] == "bulletList"
+
+    def test_plain_text_still_works(self):
+        result = text_to_adf("Just plain text here")
+        assert result["content"][0]["type"] == "paragraph"
+        assert result["content"][0]["content"][0]["text"] == "Just plain text here"
+
+    def test_adf_passthrough_still_works(self):
+        adf = {"version": 1, "type": "doc", "content": []}
+        assert text_to_adf(adf) is adf
+
+    def test_json_adf_passthrough_still_works(self):
+        adf = {"version": 1, "type": "doc", "content": []}
+        assert text_to_adf(json.dumps(adf)) == adf
+
+    def test_wiki_code_block_converted(self):
+        result = text_to_adf("{code:java}\nSystem.out.println();\n{code}")
+        assert result["content"][0]["type"] == "codeBlock"
+        assert result["content"][0]["attrs"]["language"] == "java"
+
+    def test_wiki_table_converted(self):
+        result = text_to_adf("||Col1||Col2||\n|a|b|")
+        assert result["content"][0]["type"] == "table"
