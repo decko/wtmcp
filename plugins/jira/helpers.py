@@ -282,12 +282,9 @@ def _parse_wiki_blocks(text):
 
         if state == "CODE":
             if _WIKI_CODE_END_RE.match(line):
-                attrs = {}
+                node: dict = {"type": "codeBlock", "content": [{"type": "text", "text": "\n".join(block_buffer)}]}
                 if code_lang:
-                    attrs["language"] = code_lang
-                node = {"type": "codeBlock", "content": [{"type": "text", "text": "\n".join(block_buffer)}]}
-                if attrs:
-                    node["attrs"] = attrs
+                    node["attrs"] = {"language": code_lang}
                 blocks.append(node)
                 block_buffer.clear()
                 state = "NORMAL"
@@ -357,9 +354,7 @@ def _parse_wiki_blocks(text):
             _flush_para()
             level = int(m.group(1))
             heading_text = m.group(2).strip()
-            blocks.append(
-                {"type": "heading", "attrs": {"level": level}, "content": _parse_inline_markup(heading_text)}
-            )
+            blocks.append({"type": "heading", "attrs": {"level": level}, "content": _parse_inline_markup(heading_text)})
             i += 1
             continue
 
@@ -430,12 +425,9 @@ def _parse_wiki_blocks(text):
 
     # Handle unclosed blocks
     if state == "CODE":
-        attrs = {}
+        node: dict = {"type": "codeBlock", "content": [{"type": "text", "text": "\n".join(block_buffer)}]}
         if code_lang:
-            attrs["language"] = code_lang
-        node = {"type": "codeBlock", "content": [{"type": "text", "text": "\n".join(block_buffer)}]}
-        if attrs:
-            node["attrs"] = attrs
+            node["attrs"] = {"language": code_lang}
         blocks.append(node)
     elif state == "QUOTE":
         inner = "\n".join(block_buffer)
