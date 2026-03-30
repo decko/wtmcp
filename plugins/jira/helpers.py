@@ -157,7 +157,9 @@ def _parse_inline_markup(text):
             link_text = m.group("link_text")
             link_url = m.group("link_url")
             if _is_safe_url(link_url):
-                nodes.append({"type": "text", "text": link_text, "marks": [{"type": "link", "attrs": {"href": link_url}}]})
+                nodes.append(
+                    {"type": "text", "text": link_text, "marks": [{"type": "link", "attrs": {"href": link_url}}]}
+                )
             else:
                 nodes.append({"type": "text", "text": m.group("link")})
         elif m.group("bare_link"):
