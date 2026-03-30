@@ -766,6 +766,53 @@ class TestParseInlineMarkup:
     def test_empty_string(self):
         assert _parse_inline_markup("") == []
 
+    def test_image_requires_dot(self):
+        """!important! should not be treated as an image."""
+        nodes = _parse_inline_markup("This is !important! news")
+        assert len(nodes) == 1
+        assert nodes[0]["text"] == "This is !important! news"
+
+    def test_image_with_path(self):
+        nodes = _parse_inline_markup("!images/photo.jpg!")
+        assert nodes[0]["text"] == "images/photo.jpg"
+        assert nodes[0]["marks"][0]["type"] == "link"
+
+    def test_link_unsafe_scheme_javascript(self):
+        """javascript: URLs should be emitted as plain text."""
+        nodes = _parse_inline_markup("[click|javascript:alert(1)]")
+        assert len(nodes) == 1
+        assert nodes[0] == {"type": "text", "text": "[click|javascript:alert(1)]"}
+
+    def test_link_unsafe_scheme_data(self):
+        """data: URLs should be emitted as plain text."""
+        nodes = _parse_inline_markup("[click|data:text/html,<script>]")
+        assert len(nodes) == 1
+        assert "marks" not in nodes[0]
+
+    def test_link_safe_scheme_https(self):
+        nodes = _parse_inline_markup("[Example|https://example.com]")
+        assert nodes[0]["marks"] == [{"type": "link", "attrs": {"href": "https://example.com"}}]
+
+    def test_link_safe_scheme_mailto(self):
+        nodes = _parse_inline_markup("[Email|mailto:user@example.com]")
+        assert nodes[0]["marks"] == [{"type": "link", "attrs": {"href": "mailto:user@example.com"}}]
+
+    def test_link_safe_scheme_relative(self):
+        nodes = _parse_inline_markup("[Page|/wiki/page]")
+        assert nodes[0]["marks"] == [{"type": "link", "attrs": {"href": "/wiki/page"}}]
+
+    def test_image_unsafe_scheme(self):
+        """javascript: image URL should be emitted as plain text."""
+        nodes = _parse_inline_markup("!javascript:alert.x!")
+        assert len(nodes) == 1
+        assert "marks" not in nodes[0]
+
+    def test_link_unsafe_scheme_vbscript(self):
+        """vbscript: URLs should be emitted as plain text."""
+        nodes = _parse_inline_markup("[click|vbscript:MsgBox]")
+        assert len(nodes) == 1
+        assert "marks" not in nodes[0]
+
 
 # --- Wiki to ADF block parsing ---
 

@@ -45,7 +45,7 @@ _WIKI_INLINE_RE = re.compile(
     r"|(?P<link>\[(?P<link_text>[^]|~]*)\|(?P<link_url>[^]]+)\])"
     r"|(?P<bare_link>\[(?P<bare_url>https?://[^]]+)\])"
     r"|(?P<mention>\[~(?P<mention_id>[^]]+)\])"
-    r"|(?P<image>!(?P<image_url>\S+?)!)"
+    r"|(?P<image>!(?P<image_url>\S+?\.\S+?)!)"
     r"|(?P<bold>\*(?=\S)(?P<bold_text>.+?)(?<=\S)\*)"
     r"|(?P<italic>_(?=\S)(?P<italic_text>.+?)(?<=\S)_)"
     r"|(?P<strike>-(?=\S)(?P<strike_text>.+?)(?<=\S)-)"
@@ -117,6 +117,14 @@ def extract_brief_issue(issue):
     }
 
 
+_UNSAFE_URL_RE = re.compile(r"^(?:javascript|data|vbscript):", re.IGNORECASE)
+
+
+def _is_safe_url(url):
+    """Check that a URL does not use a dangerous scheme (javascript, data, vbscript)."""
+    return not _UNSAFE_URL_RE.match(url)
+
+
 def _looks_like_wiki_markup(text):
     """Check if text contains Jira wiki markup patterns.
 
@@ -148,7 +156,10 @@ def _parse_inline_markup(text):
         elif m.group("link"):
             link_text = m.group("link_text")
             link_url = m.group("link_url")
-            nodes.append({"type": "text", "text": link_text, "marks": [{"type": "link", "attrs": {"href": link_url}}]})
+            if _is_safe_url(link_url):
+                nodes.append({"type": "text", "text": link_text, "marks": [{"type": "link", "attrs": {"href": link_url}}]})
+            else:
+                nodes.append({"type": "text", "text": m.group("link")})
         elif m.group("bare_link"):
             url = m.group("bare_url")
             nodes.append({"type": "text", "text": url, "marks": [{"type": "link", "attrs": {"href": url}}]})
@@ -156,7 +167,10 @@ def _parse_inline_markup(text):
             nodes.append({"type": "mention", "attrs": {"id": m.group("mention_id")}})
         elif m.group("image"):
             url = m.group("image_url")
-            nodes.append({"type": "text", "text": url, "marks": [{"type": "link", "attrs": {"href": url}}]})
+            if _is_safe_url(url):
+                nodes.append({"type": "text", "text": url, "marks": [{"type": "link", "attrs": {"href": url}}]})
+            else:
+                nodes.append({"type": "text", "text": m.group("image")})
         elif m.group("bold"):
             nodes.append({"type": "text", "text": m.group("bold_text"), "marks": [{"type": "strong"}]})
         elif m.group("italic"):
