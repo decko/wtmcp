@@ -51,12 +51,12 @@ _WIKI_INLINE_RE = re.compile(
     r"|(?P<bare_link>\[(?P<bare_url>https?://[^]]+)\])"
     r"|(?P<mention>\[~(?P<mention_id>[^]]+)\])"
     r"|(?P<image>!(?P<image_url>\S+?\.\S+?)!)"
-    r"|(?P<bold>\*(?=\S)(?P<bold_text>.+?)(?<=\S)\*)"
-    r"|(?P<italic>_(?=\S)(?P<italic_text>.+?)(?<=\S)_)"
-    r"|(?P<strike>-(?=\S)(?P<strike_text>.+?)(?<=\S)-)"
-    r"|(?P<underline>\+(?=\S)(?P<underline_text>.+?)(?<=\S)\+)"
-    r"|(?P<sup>\^(?=\S)(?P<sup_text>.+?)(?<=\S)\^)"
-    r"|(?P<sub>~(?=\S)(?P<sub_text>.+?)(?<=\S)~)"
+    r"|(?P<bold>(?<!\w)\*(?=\S)(?P<bold_text>.+?)(?<=\S)\*(?!\w))"
+    r"|(?P<italic>(?<!\w)_(?=\S)(?P<italic_text>.+?)(?<=\S)_(?!\w))"
+    r"|(?P<strike>(?<!\w)-(?=\S)(?P<strike_text>.+?)(?<=\S)-(?!\w))"
+    r"|(?P<underline>(?<!\w)\+(?=\S)(?P<underline_text>.+?)(?<=\S)\+(?!\w))"
+    r"|(?P<sup>(?<!\w)\^(?=\S)(?P<sup_text>.+?)(?<=\S)\^(?!\w))"
+    r"|(?P<sub>(?<!\w)~(?=\S)(?P<sub_text>.+?)(?<=\S)~(?!\w))"
     r"|(?P<linebreak>\\\\)"
 )
 

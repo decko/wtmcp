@@ -790,6 +790,48 @@ class TestParseInlineMarkup:
     def test_empty_string(self):
         assert _parse_inline_markup("") == []
 
+    def test_hyphen_mid_word_not_strike(self):
+        """Hyphens inside words should not be treated as strikethrough."""
+        nodes = _parse_inline_markup("foo-bar-baz")
+        assert len(nodes) == 1
+        assert nodes[0] == {"type": "text", "text": "foo-bar-baz"}
+
+    def test_underscore_mid_word_not_italic(self):
+        """Underscores inside identifiers should not be treated as italic."""
+        nodes = _parse_inline_markup("test_configuration_docs")
+        assert len(nodes) == 1
+        assert nodes[0] == {"type": "text", "text": "test_configuration_docs"}
+
+    def test_iso_date_not_strike(self):
+        """ISO dates should not be treated as strikethrough."""
+        nodes = _parse_inline_markup("2026-03-31")
+        assert len(nodes) == 1
+        assert nodes[0] == {"type": "text", "text": "2026-03-31"}
+
+    def test_strike_with_word_boundaries(self):
+        """Strikethrough with proper word boundaries should still work."""
+        nodes = _parse_inline_markup("some -struck- here")
+        assert nodes[1]["text"] == "struck"
+        assert nodes[1]["marks"] == [{"type": "strike"}]
+
+    def test_italic_with_word_boundaries(self):
+        """Italic with proper word boundaries should still work."""
+        nodes = _parse_inline_markup("hello _italic_ world")
+        assert nodes[1]["text"] == "italic"
+        assert nodes[1]["marks"] == [{"type": "em"}]
+
+    def test_bold_mid_word_not_bold(self):
+        """Asterisks inside words should not be treated as bold."""
+        nodes = _parse_inline_markup("foo*bar*baz")
+        assert len(nodes) == 1
+        assert nodes[0] == {"type": "text", "text": "foo*bar*baz"}
+
+    def test_strike_after_punctuation(self):
+        """Strikethrough after punctuation (not word char) should work."""
+        nodes = _parse_inline_markup("(-struck-)")
+        assert nodes[1]["text"] == "struck"
+        assert nodes[1]["marks"] == [{"type": "strike"}]
+
     def test_image_requires_dot(self):
         """!important! should not be treated as an image."""
         nodes = _parse_inline_markup("This is !important! news")
@@ -1263,3 +1305,27 @@ class TestTextToAdfWikiIntegration:
     def test_wiki_table_converted(self):
         result = text_to_adf("||Col1||Col2||\n|a|b|")
         assert result["content"][0]["type"] == "table"
+
+    def test_wiki_list_with_underscore_identifier(self):
+        """Underscores in identifiers should not become italic inside wiki lists."""
+        result = text_to_adf("* Update test_configuration_docs\n* Add tests")
+        item = result["content"][0]["content"][0]["content"][0]
+        assert len(item["content"]) == 1
+        assert item["content"][0]["text"] == "Update test_configuration_docs"
+        assert "marks" not in item["content"][0]
+
+    def test_wiki_list_with_iso_date(self):
+        """ISO dates should not become strikethrough inside wiki lists."""
+        result = text_to_adf("* Deadline: 2026-03-31\n* Status: Done")
+        item = result["content"][0]["content"][0]["content"][0]
+        assert len(item["content"]) == 1
+        assert item["content"][0]["text"] == "Deadline: 2026-03-31"
+        assert "marks" not in item["content"][0]
+
+    def test_wiki_list_with_hyphenated_words(self):
+        """Hyphenated words should not become strikethrough inside wiki lists."""
+        result = text_to_adf("* Use foo-bar-baz option\n* Done")
+        item = result["content"][0]["content"][0]["content"][0]
+        assert len(item["content"]) == 1
+        assert item["content"][0]["text"] == "Use foo-bar-baz option"
+        assert "marks" not in item["content"][0]
