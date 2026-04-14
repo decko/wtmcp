@@ -71,6 +71,7 @@ func init() {
 	statsCmd.Flags().String("since", "", "Show stats from this date (YYYY-MM-DD)")
 	statsCmd.Flags().String("until", "", "Show stats until this date (YYYY-MM-DD)")
 	statsCmd.Flags().IntP("days", "d", 0, "Show stats for the last N days (today = 1)")
+	statsCmd.Flags().StringP("plugin", "P", "", "Show stats for a single plugin only")
 
 	statsConfigCmd.AddCommand(statsConfigSetCmd)
 	statsCmd.AddCommand(statsConfigCmd, statsResetCmd)
@@ -85,6 +86,7 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	sinceStr, _ := cmd.Flags().GetString("since")
 	untilStr, _ := cmd.Flags().GetString("until")
 	days, _ := cmd.Flags().GetInt("days")
+	pluginFilter, _ := cmd.Flags().GetString("plugin")
 
 	// Validate date flag combinations.
 	if days > 0 && (sinceStr != "" || untilStr != "") {
@@ -162,10 +164,20 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	}
 	sortSummaries(summaries, sortBy)
 
+	if pluginFilter != "" {
+		filtered := summaries[:0]
+		for _, ts := range summaries {
+			if ts.PluginName == pluginFilter {
+				filtered = append(filtered, ts)
+			}
+		}
+		summaries = filtered
+	}
+
 	if plain {
-		printStatsPlain(snap, summaries, showSchemas, showResources, dateRange)
+		printStatsPlain(snap, summaries, showSchemas, showResources, dateRange, pluginFilter)
 	} else {
-		printStatsTable(snap, summaries, showSchemas, showResources, dateRange)
+		printStatsTable(snap, summaries, showSchemas, showResources, dateRange, pluginFilter)
 	}
 	return nil
 }
@@ -232,7 +244,7 @@ func sortSummaries(s []stats.ToolSummary, by string) {
 	}
 }
 
-func printStatsPlain(snap *stats.Snapshot, summaries []stats.ToolSummary, showSchemas, showResources bool, dateRange string) {
+func printStatsPlain(snap *stats.Snapshot, summaries []stats.ToolSummary, showSchemas, showResources bool, dateRange, pluginFilter string) {
 	if snap.StartedAt != nil {
 		fmt.Printf("# tokenizer: %s, since: %s\n", snap.Tokenizer, snap.StartedAt.Format("2006-01-02"))
 	} else {
@@ -258,7 +270,10 @@ func printStatsPlain(snap *stats.Snapshot, summaries []stats.ToolSummary, showSc
 	if showSchemas {
 		fmt.Println()
 		schemaNames := make([]string, 0, len(snap.Schemas))
-		for name := range snap.Schemas {
+		for name, se := range snap.Schemas {
+			if pluginFilter != "" && se.PluginName != pluginFilter {
+				continue
+			}
 			schemaNames = append(schemaNames, name)
 		}
 		sort.Strings(schemaNames)
@@ -271,7 +286,10 @@ func printStatsPlain(snap *stats.Snapshot, summaries []stats.ToolSummary, showSc
 	if showResources {
 		fmt.Println()
 		resourceURIs := make([]string, 0, len(snap.Resources))
-		for uri := range snap.Resources {
+		for uri, re := range snap.Resources {
+			if pluginFilter != "" && re.PluginName != pluginFilter {
+				continue
+			}
 			resourceURIs = append(resourceURIs, uri)
 		}
 		sort.Strings(resourceURIs)
@@ -284,7 +302,7 @@ func printStatsPlain(snap *stats.Snapshot, summaries []stats.ToolSummary, showSc
 	}
 }
 
-func printStatsTable(snap *stats.Snapshot, summaries []stats.ToolSummary, showSchemas, showResources bool, dateRange string) {
+func printStatsTable(snap *stats.Snapshot, summaries []stats.ToolSummary, showSchemas, showResources bool, dateRange, pluginFilter string) {
 	w, _, _ := term.GetSize(os.Stdout.Fd())
 	if w <= 0 {
 		w = 100
@@ -354,7 +372,12 @@ func printStatsTable(snap *stats.Snapshot, summaries []stats.ToolSummary, showSc
 		}
 		byPlugin := make(map[string]*pluginSchema)
 		totalSchemaTokens := 0
+		filteredSchemaCount := 0
 		for _, se := range snap.Schemas {
+			if pluginFilter != "" && se.PluginName != pluginFilter {
+				continue
+			}
+			filteredSchemaCount++
 			ps, ok := byPlugin[se.PluginName]
 			if !ok {
 				ps = &pluginSchema{name: se.PluginName}
@@ -378,7 +401,7 @@ func printStatsTable(snap *stats.Snapshot, summaries []stats.ToolSummary, showSc
 		})
 		schemaRows = append(schemaRows, []string{
 			"Total",
-			fmtInt(len(snap.Schemas)),
+			fmtInt(filteredSchemaCount),
 			fmtInt(totalSchemaTokens),
 		})
 
@@ -403,6 +426,9 @@ func printStatsTable(snap *stats.Snapshot, summaries []stats.ToolSummary, showSc
 
 		resRows := make([][]string, 0, len(snap.Resources))
 		for _, re := range snap.Resources {
+			if pluginFilter != "" && re.PluginName != pluginFilter {
+				continue
+			}
 			resRows = append(resRows, []string{
 				re.URI,
 				re.PluginName,
