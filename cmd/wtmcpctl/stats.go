@@ -192,25 +192,42 @@ func loadSnapshot() (*stats.Snapshot, error) {
 	return &snap, nil
 }
 
+// nameLess is the tie-breaker: sort by (PluginName, ToolName) ascending.
+func nameLess(a, b stats.ToolSummary) bool {
+	if a.PluginName != b.PluginName {
+		return a.PluginName < b.PluginName
+	}
+	return a.ToolName < b.ToolName
+}
+
 func sortSummaries(s []stats.ToolSummary, by string) {
 	switch by {
 	case "tokens":
 		sort.Slice(s, func(i, j int) bool {
 			ti := s[i].TotalInputTokens + s[i].TotalOutputTokens
 			tj := s[j].TotalInputTokens + s[j].TotalOutputTokens
-			return ti > tj
+			if ti != tj {
+				return ti > tj
+			}
+			return nameLess(s[i], s[j])
 		})
 	case "errors":
 		sort.Slice(s, func(i, j int) bool {
-			return s[i].ErrorCount > s[j].ErrorCount
+			if s[i].ErrorCount != s[j].ErrorCount {
+				return s[i].ErrorCount > s[j].ErrorCount
+			}
+			return nameLess(s[i], s[j])
 		})
 	case "name":
 		sort.Slice(s, func(i, j int) bool {
-			return s[i].ToolName < s[j].ToolName
+			return nameLess(s[i], s[j])
 		})
 	default: // "calls"
 		sort.Slice(s, func(i, j int) bool {
-			return s[i].CallCount > s[j].CallCount
+			if s[i].CallCount != s[j].CallCount {
+				return s[i].CallCount > s[j].CallCount
+			}
+			return nameLess(s[i], s[j])
 		})
 	}
 }
@@ -240,14 +257,26 @@ func printStatsPlain(snap *stats.Snapshot, summaries []stats.ToolSummary, showSc
 
 	if showSchemas {
 		fmt.Println()
-		for name, se := range snap.Schemas {
+		schemaNames := make([]string, 0, len(snap.Schemas))
+		for name := range snap.Schemas {
+			schemaNames = append(schemaNames, name)
+		}
+		sort.Strings(schemaNames)
+		for _, name := range schemaNames {
+			se := snap.Schemas[name]
 			fmt.Printf("schema\t%s\t%s\t%d\n", se.PluginName, name, se.TotalTokens)
 		}
 	}
 
 	if showResources {
 		fmt.Println()
-		for _, re := range snap.Resources {
+		resourceURIs := make([]string, 0, len(snap.Resources))
+		for uri := range snap.Resources {
+			resourceURIs = append(resourceURIs, uri)
+		}
+		sort.Strings(resourceURIs)
+		for _, uri := range resourceURIs {
+			re := snap.Resources[uri]
 			fmt.Printf("resource\t%s\t%s\t%s\t%d\t%d\t%d\n",
 				re.PluginName, re.URI, re.ResourceType,
 				re.ContentBytes, re.ContentTokens, re.ReadCount)
