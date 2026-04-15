@@ -158,7 +158,17 @@ const maxEnvFileSize = 1 << 20
 // loadEnvFile validates and reads a single env.d file. Rejects
 // symlinks, checks permissions, auto-detects Ansible Vault encrypted
 // files, and decrypts if a vault password is available.
+// Returns an empty map (not an error) when the file does not exist,
+// since env.d files are optional overrides — some plugins (e.g.,
+// OAuth2-based) use credential files rather than env.d variables.
 func loadEnvFile(path string, opts EnvLoadOptions) (map[string]string, error) {
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]string), nil
+		}
+		return nil, fmt.Errorf("lstat %s: %w", path, err)
+	}
+
 	if err := RejectSymlink(path); err != nil {
 		return nil, err
 	}

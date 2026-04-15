@@ -280,6 +280,22 @@ func TestLoadSingleEnvGroupBadPerms(t *testing.T) {
 	}
 }
 
+func TestLoadSingleEnvGroupMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	envDir := filepath.Join(dir, "env.d")
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	vars, err := LoadSingleEnvGroup(envDir, "nonexistent")
+	if err != nil {
+		t.Fatalf("expected no error for missing file, got: %v", err)
+	}
+	if len(vars) != 0 {
+		t.Errorf("expected empty map, got %v", vars)
+	}
+}
+
 func TestParseEnvFile(t *testing.T) {
 	dir := t.TempDir()
 	envFile := filepath.Join(dir, "test.env")
