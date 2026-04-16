@@ -33,6 +33,8 @@ _UUID_RE = re.compile(
     re.IGNORECASE,
 )
 
+_HOST_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9._-]{0,253}[a-zA-Z0-9])?$")
+
 
 def _send(msg):
     """Write a JSON message to stdout (core reads it)."""
@@ -416,17 +418,20 @@ def testing_farm_get_ssh(params):
         raise Exception("No artifacts URL found — request may still be queued")
 
     state = body.get("state", "")
-    ret = {
-        "error": "",
-        "state": state,
-        "request_id": request_id,
-    }
     if state == "complete":
-        ret["error"] = "Reservation is complete — the host has been returned to the infrastructure"
-        return ret
+        return {
+            "error": "Reservation is complete — the host has been returned to the infrastructure",
+            "state": state,
+            "request_id": request_id,
+            "artifacts_url": artifacts_url,
+        }
     elif state != "running":
-        ret["error"] = f"Request is in state '{state}' — SSH info is only available for running reservations"
-        return ret
+        return {
+            "error": f"Request is in state '{state}' — SSH info is only available for running reservations",
+            "state": state,
+            "request_id": request_id,
+            "artifacts_url": artifacts_url,
+        }
 
     envs = body.get("environments_requested", [])
     env0 = envs[0] if envs else {}
@@ -435,23 +440,29 @@ def testing_farm_get_ssh(params):
     results_url = f"{artifacts_url}/results.xml"
     rstatus, rbody, _ = http("GET", "/", url=results_url)
     if rstatus != 200:
-        raise Exception(f"Failed to fetch results.xml (HTTP {rstatus}): artifacts may not be available yet")
-
-    # Parse results.xml to find console log.
-    xml_text = rbody if isinstance(rbody, str) else rbody.decode("utf-8") if isinstance(rbody, bytes) else str(rbody)
-    ip_address = _parse_ssh_from_results_xml(xml_text, artifacts_url)
-
-    if not ip_address:
         return {
-            "error": "Could not extract IP address from console logs",
+            "error": "Artifacts not available yet — system may still be provisioning",
+            "hint": "Try again in a minute",
+            "request_id": request_id,
+            "state": state,
+            "artifacts_url": artifacts_url,
+        }
+
+    # Parse results.xml to find the host.
+    xml_text = rbody if isinstance(rbody, str) else rbody.decode("utf-8") if isinstance(rbody, bytes) else str(rbody)
+    host = _parse_ssh_from_results_xml(xml_text, artifacts_url)
+
+    if not host:
+        return {
+            "error": "Could not extract host from results.xml",
             "request_id": request_id,
             "artifacts_url": artifacts_url,
             "hint": "The system may still be provisioning. Try again shortly.",
         }
 
     result = {
-        "ip": ip_address,
-        "ssh_command": f"ssh root@{ip_address}",
+        "host": host,
+        "ssh_command": f"ssh root@{host}",
         "request_id": request_id,
         "state": state,
         "compose": env0.get("os", {}).get("compose", ""),
@@ -464,8 +475,12 @@ def testing_farm_get_ssh(params):
 
 def _parse_ssh_from_results_xml(xml_text, artifacts_url):
     """
-    Parse results.xml to find workdir and extract IP from guests.yaml.
-    Fall back to console logs.
+    Parse results.xml to find the host for SSH connection.
+
+    Tries in order:
+    1. baseosci.connectable_host property (most reliable, no extra fetches)
+    2. guests.yaml in the workdir (primary-address field)
+    3. Console log IP patterns (cloud-init, IPv4, ssh command)
     """
     try:
         root = ET.fromstring(xml_text)
@@ -473,6 +488,14 @@ def _parse_ssh_from_results_xml(xml_text, artifacts_url):
         log("failed to parse results.xml as XML")
         return None
 
+    # Strategy 1: connectable_host property (hostname or IP).
+    for prop in root.iter("property"):
+        if prop.get("name") == "baseosci.connectable_host":
+            host = prop.get("value", "").strip()
+            if host and _HOST_RE.match(host):
+                return host
+
+    # Strategy 2+3: workdir-based extraction (guests.yaml, console logs).
     # Find workdir log entries.
     workdir_href = None
     for log_elem in root.iter("log"):

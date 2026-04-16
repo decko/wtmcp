@@ -5,9 +5,6 @@ from unittest.mock import patch
 
 import handler
 
-REQ_ID = "30a35fea-17f8-4399-9e67-fd3b074ed1ac"
-REQ_ID_2 = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
-
 
 def _mock_http(status, body):
     """Return a mock for handler.http that returns (status, body, headers)."""
@@ -38,6 +35,9 @@ WHOAMI_RESPONSE = {
     "id": "user-123",
     "name": "testuser",
 }
+
+REQ_ID = "30a35fea-17f8-4399-9e67-fd3b074ed1ac"
+REQ_ID_2 = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 
 SAMPLE_REQUEST = {
     "id": REQ_ID,
@@ -76,7 +76,7 @@ RESERVE_REQUEST = {
 
 class TestValidateRequestId:
     def test_valid_uuid(self):
-        handler._validate_request_id(REQ_ID)
+        handler._validate_request_id("30a35fea-17f8-4399-9e67-fd3b074ed1ac")
 
     def test_invalid_format(self):
         try:
@@ -279,6 +279,7 @@ class TestListComposes:
         composes = {"Fedora": [{"name": "Fedora-Rawhide", "allowed_arches": ["x86_64"]}]}
         with _mock_cache_get(None), _mock_http(200, composes), _mock_cache_set() as mock_set:
             result = handler.testing_farm_list_composes({})
+            # Should trim to just names, stripping metadata.
             assert result == {"Fedora": ["Fedora-Rawhide"]}
             mock_set.assert_called_once()
             assert mock_set.call_args[1]["ttl"] == 14400
@@ -353,6 +354,34 @@ class TestExtractResult:
 
 
 class TestParseSshFromResultsXml:
+    def test_from_connectable_host_hostname(self):
+        xml = """<testsuites>
+            <testsuite name="/testing-farm/reserve">
+                <testcase name="/testing-farm/reserve-system">
+                    <properties>
+                        <property name="baseosci.connectable_host"
+                                  value="server01.example.com"/>
+                    </properties>
+                </testcase>
+            </testsuite>
+        </testsuites>"""
+        result = handler._parse_ssh_from_results_xml(xml, "https://artifacts")
+        assert result == "server01.example.com"
+
+    def test_from_connectable_host_ip(self):
+        xml = """<testsuites>
+            <testsuite>
+                <testcase>
+                    <properties>
+                        <property name="baseosci.connectable_host"
+                                  value="10.31.8.213"/>
+                    </properties>
+                </testcase>
+            </testsuite>
+        </testsuites>"""
+        result = handler._parse_ssh_from_results_xml(xml, "https://artifacts")
+        assert result == "10.31.8.213"
+
     def test_from_guests_yaml(self):
         xml = '<testsuite><logs><log href="work-dir/" name="workdir"/></logs></testsuite>'
         yaml_content = """default-0:
@@ -411,6 +440,7 @@ class TestParseXunit:
         assert len(tests) == 2
         assert tests[0]["result"] == "passed"
         assert tests[0]["name"] == "test1"
+        # classname and time are trimmed to save tokens.
         assert "classname" not in tests[0]
         assert "time" not in tests[0]
 
@@ -499,6 +529,7 @@ class TestGetResults:
         with _mock_cache_get(None), _mock_http(200, body), _mock_cache_set() as mock_set:
             result = handler.testing_farm_get_results({"request_id": REQ_ID})
             assert result["state"] == "error"
+            # Error state should be cached (terminal).
             cache_calls = [c for c in mock_set.call_args_list if c[0][0] == f"tf:results:{REQ_ID}"]
             assert len(cache_calls) == 1
 
@@ -540,6 +571,7 @@ class TestReserve:
             assert env["os"]["compose"] == "Fedora-Rawhide"
             assert env["arch"] == "x86_64"
             assert env["variables"]["TF_RESERVATION_DURATION"] == "60"
+            # Verify SSH keys are base64 encoded.
             decoded = base64.b64decode(env["secrets"]["TF_RESERVATION_AUTHORIZED_KEYS_BASE64"]).decode()
             assert "ssh-ed25519 AAAA testkey" in decoded
 
@@ -644,6 +676,7 @@ class TestCancel:
             result = handler.testing_farm_cancel({"request_id": REQ_ID})
             assert result["request_id"] == REQ_ID
             assert "cancelled" in result["message"]
+            # Should invalidate all cached data for this request.
             assert mock_del.call_count == 3
             deleted_keys = [c[0][0] for c in mock_del.call_args_list]
             assert f"tf:raw:{REQ_ID}" in deleted_keys
@@ -711,7 +744,7 @@ class TestDiscoverSshKeys:
 
 class TestGetSsh:
     def test_cache_hit(self):
-        cached = {"ip": "10.0.0.1", "ssh_command": "ssh root@10.0.0.1"}
+        cached = {"host": "10.0.0.1", "ssh_command": "ssh root@10.0.0.1"}
         with _mock_cache_get(cached):
             result = handler.testing_farm_get_ssh({"request_id": REQ_ID})
             assert result == cached
@@ -723,6 +756,7 @@ class TestGetSsh:
             result = handler.testing_farm_get_ssh({"request_id": REQ_ID})
             assert "error" in result
             assert result["state"] == "queued"
+            assert result["artifacts_url"] == "https://artifacts.example.com/req-1"
 
     def test_complete(self):
         req = {**SAMPLE_REQUEST, "state": "complete"}
@@ -732,6 +766,24 @@ class TestGetSsh:
             assert "error" in result
             assert result["state"] == "complete"
             assert "returned" in result["error"]
+            assert result["artifacts_url"] == "https://artifacts.example.com/req-1"
+
+    def test_results_xml_not_available(self):
+        req = {**SAMPLE_REQUEST, "state": "running"}
+        req["run"] = {"artifacts": "https://artifacts.example.com/req-1"}
+
+        def mock_http(method, path, url=None, **kwargs):
+            if url and "results.xml" in url:
+                return 404, "Not Found", {}
+            return 200, req, {}
+
+        with _mock_cache_get(None), patch.object(handler, "http", side_effect=mock_http):
+            result = handler.testing_farm_get_ssh({"request_id": REQ_ID})
+            assert "error" in result
+            assert "provisioning" in result["error"].lower()
+            assert result["state"] == "running"
+            assert result["artifacts_url"] == "https://artifacts.example.com/req-1"
+            assert "hint" in result
 
     def test_no_artifacts_url(self):
         req = {**SAMPLE_REQUEST, "run": {}}

@@ -15,6 +15,7 @@ services:
     token: "${TESTING_FARM_API_TOKEN}"
   http:
     base_url: "${TF_API_URL:-https://api.testing-farm.io}"
+    allow_private_ips: true
     allowed_domains:
       - api.testing-farm.io
       - api.dev.testing-farm.io
@@ -73,8 +74,9 @@ tools:
     access: read
     visibility: primary
     description: >
-      Get detailed status of a test request. Returns state, result,
-      environments, artifacts URL, and stage details.
+      Get detailed status of a test request. Check the 'state' field
+      (new/queued/running/complete/error) to determine progress. The
+      'result' field is 'pending' until the request completes.
     params:
       request_id:
         type: string
@@ -105,9 +107,9 @@ tools:
   - name: testing_farm_get_ssh
     access: read
     description: >
-      Extract SSH connection info for a reservation. Fetches
-      results.xml from artifacts, parses console logs to find the
-      IP address. Returns IP, SSH command, and request details.
+      Extract SSH connection info for a reservation. Parses the
+      host from results.xml properties, guests.yaml, or console
+      logs. Returns host, SSH command, and request details.
     params:
       request_id:
         type: string
