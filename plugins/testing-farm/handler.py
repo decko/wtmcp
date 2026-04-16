@@ -303,7 +303,10 @@ def testing_farm_get_request(params):
     run = body.get("run", {}) or {}
     artifacts_url = run.get("artifacts", "")
 
-    return {
+    api_result = body.get("result") or {}
+    summary = api_result.get("summary", "") if isinstance(api_result, dict) else ""
+
+    out = {
         "id": body.get("id", ""),
         "state": body.get("state", ""),
         "result": _extract_result(body),
@@ -317,6 +320,11 @@ def testing_farm_get_request(params):
         "run_log": run.get("log", ""),
         "run_stages": [{"name": s.get("name", ""), "status": s.get("status", "")} for s in (run.get("stages") or [])],
     }
+
+    if summary:
+        out["summary"] = summary
+
+    return out
 
 
 def testing_farm_list_composes(_params):

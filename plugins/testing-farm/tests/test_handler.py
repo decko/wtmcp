@@ -228,6 +228,17 @@ class TestGetRequest:
             assert result["arch"] == "x86_64"
             assert result["artifacts_url"] == f"https://artifacts.example.com/{REQ_ID}"
 
+    def test_summary_included_when_present(self):
+        req = {**SAMPLE_REQUEST, "result": {"overall": "passed", "summary": "2 of 2 tests passed"}}
+        with _mock_cache_get(None), _mock_http(200, req), _mock_cache_set():
+            result = handler.testing_farm_get_request({"request_id": REQ_ID})
+            assert result["summary"] == "2 of 2 tests passed"
+
+    def test_summary_omitted_when_empty(self):
+        with _mock_cache_get(None), _mock_http(200, SAMPLE_REQUEST), _mock_cache_set():
+            result = handler.testing_farm_get_request({"request_id": REQ_ID})
+            assert "summary" not in result
+
     def test_running(self):
         running_req = {**SAMPLE_REQUEST, "state": "running"}
         with _mock_cache_get(None), _mock_http(200, running_req), _mock_cache_set():
