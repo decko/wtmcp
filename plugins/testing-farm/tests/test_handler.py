@@ -308,16 +308,34 @@ class TestListReservations:
 
 class TestExtractResult:
     def test_dict_result(self):
-        assert handler._extract_result({"result": {"overall": "passed"}}) == "passed"
+        assert handler._extract_result({"state": "complete", "result": {"overall": "passed"}}) == "passed"
 
     def test_string_result(self):
-        assert handler._extract_result({"result": "error"}) == "error"
+        assert handler._extract_result({"state": "error", "result": "error"}) == "error"
 
-    def test_empty_result(self):
-        assert handler._extract_result({"result": {}}) == "unknown"
+    def test_empty_result_terminal(self):
+        assert handler._extract_result({"state": "complete", "result": {}}) == "unknown"
 
-    def test_missing_result(self):
-        assert handler._extract_result({}) == "unknown"
+    def test_missing_result_terminal(self):
+        assert handler._extract_result({"state": "complete"}) == "unknown"
+
+    def test_none_result_terminal(self):
+        assert handler._extract_result({"state": "complete", "result": None}) == "unknown"
+
+    def test_running_returns_pending(self):
+        assert handler._extract_result({"state": "running", "result": {}}) == "pending"
+
+    def test_new_returns_pending(self):
+        assert handler._extract_result({"state": "new"}) == "pending"
+
+    def test_queued_returns_pending(self):
+        assert handler._extract_result({"state": "queued"}) == "pending"
+
+    def test_cancel_requested_returns_pending(self):
+        assert handler._extract_result({"state": "cancel-requested"}) == "pending"
+
+    def test_canceled_returns_canceled(self):
+        assert handler._extract_result({"state": "canceled"}) == "canceled"
 
 
 # --- _parse_ssh_from_results_xml ---

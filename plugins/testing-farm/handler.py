@@ -272,8 +272,19 @@ def testing_farm_list_requests(params):
 
 
 def _extract_result(req):
-    """Extract overall result from a request."""
-    result = req.get("result", {})
+    """Extract overall result from a request.
+
+    Returns "pending" for non-terminal states (the result doesn't
+    exist yet), "canceled" for canceled requests, and the actual
+    result value for terminal states with results.
+    """
+    state = req.get("state", "")
+    if state in NON_TERMINAL_STATES:
+        return "pending"
+    if state == "canceled":
+        return "canceled"
+
+    result = req.get("result") or {}
     if isinstance(result, dict):
         return result.get("overall", "unknown")
     return str(result) if result else "unknown"
