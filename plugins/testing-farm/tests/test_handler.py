@@ -5,6 +5,9 @@ from unittest.mock import patch
 
 import handler
 
+REQ_ID = "30a35fea-17f8-4399-9e67-fd3b074ed1ac"
+REQ_ID_2 = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+
 
 def _mock_http(status, body):
     """Return a mock for handler.http that returns (status, body, headers)."""
@@ -37,7 +40,7 @@ WHOAMI_RESPONSE = {
 }
 
 SAMPLE_REQUEST = {
-    "id": "req-abc-123",
+    "id": REQ_ID,
     "state": "complete",
     "result": {"overall": "passed"},
     "created": "2025-01-15T10:00:00Z",
@@ -49,11 +52,11 @@ SAMPLE_REQUEST = {
             "arch": "x86_64",
         }
     ],
-    "run": {"log": "https://example.com/log", "stages": [], "artifacts": "https://artifacts.example.com/req-abc-123"},
+    "run": {"log": "https://example.com/log", "stages": [], "artifacts": f"https://artifacts.example.com/{REQ_ID}"},
 }
 
 RESERVE_REQUEST = {
-    "id": "req-reserve-456",
+    "id": REQ_ID_2,
     "state": "running",
     "result": {"overall": "unknown"},
     "created": "2025-01-15T11:00:00Z",
@@ -66,6 +69,73 @@ RESERVE_REQUEST = {
         }
     ],
 }
+
+
+# --- _validate_request_id ---
+
+
+class TestValidateRequestId:
+    def test_valid_uuid(self):
+        handler._validate_request_id(REQ_ID)
+
+    def test_invalid_format(self):
+        try:
+            handler._validate_request_id("not-a-uuid")
+            assert False, "Should have raised"
+        except Exception as e:
+            assert "Invalid request ID" in str(e)
+
+    def test_path_traversal(self):
+        try:
+            handler._validate_request_id("../../admin/secrets")
+            assert False, "Should have raised"
+        except Exception as e:
+            assert "Invalid request ID" in str(e)
+
+
+# --- _fetch_request ---
+
+
+class TestFetchRequest:
+    def test_cache_miss_fetches_and_caches_terminal(self):
+        with _mock_cache_get(None), _mock_http(200, SAMPLE_REQUEST), _mock_cache_set() as mock_set:
+            result = handler._fetch_request("req-abc-123")
+            assert result == SAMPLE_REQUEST
+            mock_set.assert_called_once()
+            assert mock_set.call_args[0][0] == "tf:raw:req-abc-123"
+            assert mock_set.call_args[1]["ttl"] == 3600
+
+    def test_cache_miss_running_not_cached(self):
+        running_req = {**SAMPLE_REQUEST, "state": "running"}
+        with _mock_cache_get(None), _mock_http(200, running_req), _mock_cache_set() as mock_set:
+            result = handler._fetch_request("req-abc-123")
+            assert result["state"] == "running"
+            mock_set.assert_not_called()
+
+    def test_cache_hit(self):
+        with _mock_cache_get(SAMPLE_REQUEST):
+            result = handler._fetch_request("req-abc-123")
+            assert result == SAMPLE_REQUEST
+
+    def test_http_error(self):
+        with _mock_cache_get(None), _mock_http(500, {"error": "fail"}):
+            try:
+                handler._fetch_request("bad-id")
+                assert False, "Should have raised"
+            except Exception as e:
+                assert "500" in str(e)
+
+    def test_caches_error_state(self):
+        error_req = {**SAMPLE_REQUEST, "state": "error"}
+        with _mock_cache_get(None), _mock_http(200, error_req), _mock_cache_set() as mock_set:
+            handler._fetch_request("req-err")
+            mock_set.assert_called_once()
+
+    def test_caches_canceled_state(self):
+        canceled_req = {**SAMPLE_REQUEST, "state": "canceled"}
+        with _mock_cache_get(None), _mock_http(200, canceled_req), _mock_cache_set() as mock_set:
+            handler._fetch_request("req-cancel")
+            mock_set.assert_called_once()
 
 
 # --- testing_farm_about ---
@@ -117,7 +187,7 @@ class TestListRequests:
         with _mock_cache_get(None), _mock_http(200, body), _mock_cache_set():
             result = handler.testing_farm_list_requests({})
             assert result["count"] == 1
-            assert result["requests"][0]["id"] == "req-abc-123"
+            assert result["requests"][0]["id"] == REQ_ID
             assert result["requests"][0]["state"] == "complete"
             assert result["requests"][0]["compose"] == "Fedora-Rawhide"
 
@@ -148,24 +218,21 @@ class TestListRequests:
 
 
 class TestGetRequest:
-    def test_success_caches_terminal(self):
-        with _mock_cache_get(None), _mock_http(200, SAMPLE_REQUEST), _mock_cache_set() as mock_set:
-            result = handler.testing_farm_get_request({"request_id": "req-abc-123"})
-            assert result["id"] == "req-abc-123"
+    def test_success(self):
+        with _mock_cache_get(None), _mock_http(200, SAMPLE_REQUEST), _mock_cache_set():
+            result = handler.testing_farm_get_request({"request_id": REQ_ID})
+            assert result["id"] == REQ_ID
             assert result["state"] == "complete"
             assert result["result"] == "passed"
             assert result["compose"] == "Fedora-Rawhide"
             assert result["arch"] == "x86_64"
-            assert result["artifacts_url"] == "https://artifacts.example.com/req-abc-123"
-            # Terminal state should be cached.
-            mock_set.assert_called_once()
+            assert result["artifacts_url"] == f"https://artifacts.example.com/{REQ_ID}"
 
-    def test_running_not_cached(self):
+    def test_running(self):
         running_req = {**SAMPLE_REQUEST, "state": "running"}
-        with _mock_cache_get(None), _mock_http(200, running_req), _mock_cache_set() as mock_set:
-            result = handler.testing_farm_get_request({"request_id": "req-abc-123"})
+        with _mock_cache_get(None), _mock_http(200, running_req), _mock_cache_set():
+            result = handler.testing_farm_get_request({"request_id": REQ_ID})
             assert result["state"] == "running"
-            mock_set.assert_not_called()
 
     def test_stages_trimmed(self):
         req_with_stages = {
@@ -176,22 +243,21 @@ class TestGetRequest:
             },
         }
         with _mock_cache_get(None), _mock_http(200, req_with_stages), _mock_cache_set():
-            result = handler.testing_farm_get_request({"request_id": "req-abc-123"})
+            result = handler.testing_farm_get_request({"request_id": REQ_ID})
             assert result["run_stages"] == [{"name": "provision", "status": "ok"}]
 
     def test_cache_hit(self):
-        cached = {"id": "req-abc-123", "state": "complete"}
-        with _mock_cache_get(cached):
-            result = handler.testing_farm_get_request({"request_id": "req-abc-123"})
-            assert result == cached
+        with _mock_cache_get(SAMPLE_REQUEST):
+            result = handler.testing_farm_get_request({"request_id": REQ_ID})
+            assert result["id"] == REQ_ID
+            assert result["state"] == "complete"
 
-    def test_http_error(self):
-        with _mock_cache_get(None), _mock_http(404, {"error": "not found"}):
-            try:
-                handler.testing_farm_get_request({"request_id": "bad-id"})
-                assert False, "Should have raised"
-            except Exception as e:
-                assert "404" in str(e)
+    def test_invalid_request_id(self):
+        try:
+            handler.testing_farm_get_request({"request_id": "not-a-valid-uuid"})
+            assert False, "Should have raised"
+        except Exception as e:
+            assert "Invalid request ID" in str(e)
 
 
 # --- testing_farm_list_composes ---
@@ -202,7 +268,6 @@ class TestListComposes:
         composes = {"Fedora": [{"name": "Fedora-Rawhide", "allowed_arches": ["x86_64"]}]}
         with _mock_cache_get(None), _mock_http(200, composes), _mock_cache_set() as mock_set:
             result = handler.testing_farm_list_composes({})
-            # Should trim to just names, stripping metadata.
             assert result == {"Fedora": ["Fedora-Rawhide"]}
             mock_set.assert_called_once()
             assert mock_set.call_args[1]["ttl"] == 14400
@@ -223,7 +288,7 @@ class TestListReservations:
         with _mock_cache_get(None), _mock_http(200, body), _mock_cache_set():
             result = handler.testing_farm_list_reservations({})
             assert result["count"] == 1
-            assert result["reservations"][0]["id"] == "req-reserve-456"
+            assert result["reservations"][0]["id"] == REQ_ID_2
             assert result["reservations"][0]["duration_min"] == "60"
 
     def test_empty_when_no_reservations(self):
@@ -317,7 +382,6 @@ class TestParseXunit:
         assert len(tests) == 2
         assert tests[0]["result"] == "passed"
         assert tests[0]["name"] == "test1"
-        # classname and time are trimmed to save tokens.
         assert "classname" not in tests[0]
         assert "time" not in tests[0]
 
@@ -367,15 +431,15 @@ class TestGetResults:
             },
         }
         with _mock_cache_get(None), _mock_http(200, body), _mock_cache_set():
-            result = handler.testing_farm_get_results({"request_id": "req-1"})
+            result = handler.testing_farm_get_results({"request_id": REQ_ID})
             assert result["overall"] == "passed"
             assert result["test_count"] == 1
             assert result["tests"][0]["name"] == "t1"
 
     def test_cache_hit(self):
-        cached = {"request_id": "req-1", "overall": "passed"}
+        cached = {"request_id": REQ_ID, "overall": "passed"}
         with _mock_cache_get(cached):
-            result = handler.testing_farm_get_results({"request_id": "req-1"})
+            result = handler.testing_farm_get_results({"request_id": REQ_ID})
             assert result == cached
 
 
@@ -383,24 +447,16 @@ class TestGetResults:
 
 
 class TestGetLogs:
-    def test_success_caches_terminal(self):
-        with _mock_cache_get(None), _mock_http(200, SAMPLE_REQUEST), _mock_cache_set() as mock_set:
-            result = handler.testing_farm_get_logs({"request_id": "req-abc-123"})
+    def test_success(self):
+        with _mock_cache_get(None), _mock_http(200, SAMPLE_REQUEST), _mock_cache_set():
+            result = handler.testing_farm_get_logs({"request_id": REQ_ID})
             assert result["pipeline_log"] == "https://example.com/log"
-            assert result["artifacts_url"] == "https://artifacts.example.com/req-abc-123"
-            mock_set.assert_called_once()
-
-    def test_running_not_cached(self):
-        running_req = {**SAMPLE_REQUEST, "state": "running"}
-        with _mock_cache_get(None), _mock_http(200, running_req), _mock_cache_set() as mock_set:
-            handler.testing_farm_get_logs({"request_id": "req-abc-123"})
-            mock_set.assert_not_called()
+            assert result["artifacts_url"] == f"https://artifacts.example.com/{REQ_ID}"
 
     def test_cache_hit(self):
-        cached = {"request_id": "req-1", "pipeline_log": "url"}
-        with _mock_cache_get(cached):
-            result = handler.testing_farm_get_logs({"request_id": "req-1"})
-            assert result == cached
+        with _mock_cache_get(SAMPLE_REQUEST):
+            result = handler.testing_farm_get_logs({"request_id": REQ_ID})
+            assert result["pipeline_log"] == "https://example.com/log"
 
 
 # --- testing_farm_reserve ---
@@ -418,7 +474,6 @@ class TestReserve:
             assert env["os"]["compose"] == "Fedora-Rawhide"
             assert env["arch"] == "x86_64"
             assert env["variables"]["TF_RESERVATION_DURATION"] == "60"
-            # Verify SSH keys are base64 encoded.
             decoded = base64.b64decode(env["secrets"]["TF_RESERVATION_AUTHORIZED_KEYS_BASE64"]).decode()
             assert "ssh-ed25519 AAAA testkey" in decoded
 
@@ -520,29 +575,26 @@ class TestSubmitTest:
 class TestCancel:
     def test_success_invalidates_cache(self):
         with _mock_http(200, {}), _mock_cache_del() as mock_del:
-            result = handler.testing_farm_cancel({"request_id": "req-abc-123"})
-            assert result["request_id"] == "req-abc-123"
+            result = handler.testing_farm_cancel({"request_id": REQ_ID})
+            assert result["request_id"] == REQ_ID
             assert "cancelled" in result["message"]
-            # Should invalidate all cached data for this request.
-            assert mock_del.call_count == 4
+            assert mock_del.call_count == 3
             deleted_keys = [c[0][0] for c in mock_del.call_args_list]
-            assert "tf:request:req-abc-123" in deleted_keys
-            assert "tf:ssh:req-abc-123" in deleted_keys
-            assert "tf:results:req-abc-123" in deleted_keys
-            assert "tf:logs:req-abc-123" in deleted_keys
+            assert f"tf:raw:{REQ_ID}" in deleted_keys
+            assert f"tf:ssh:{REQ_ID}" in deleted_keys
+            assert f"tf:results:{REQ_ID}" in deleted_keys
 
     def test_204_success(self):
         with _mock_http(204, {}), _mock_cache_del():
-            result = handler.testing_farm_cancel({"request_id": "req-abc-123"})
-            assert result["request_id"] == "req-abc-123"
+            result = handler.testing_farm_cancel({"request_id": REQ_ID})
+            assert result["request_id"] == REQ_ID
 
-    def test_error(self):
-        with _mock_http(404, {"error": "not found"}):
-            try:
-                handler.testing_farm_cancel({"request_id": "bad-id"})
-                assert False, "Should have raised"
-            except Exception as e:
-                assert "404" in str(e)
+    def test_invalid_request_id(self):
+        try:
+            handler.testing_farm_cancel({"request_id": "not-a-valid-uuid"})
+            assert False, "Should have raised"
+        except Exception as e:
+            assert "Invalid request ID" in str(e)
 
 
 # --- _discover_ssh_keys ---
@@ -595,31 +647,31 @@ class TestGetSsh:
     def test_cache_hit(self):
         cached = {"ip": "10.0.0.1", "ssh_command": "ssh root@10.0.0.1"}
         with _mock_cache_get(cached):
-            result = handler.testing_farm_get_ssh({"request_id": "req-1"})
+            result = handler.testing_farm_get_ssh({"request_id": REQ_ID})
             assert result == cached
 
     def test_not_running(self):
         req = {**SAMPLE_REQUEST, "state": "queued"}
         req["run"] = {"artifacts": "https://artifacts.example.com/req-1"}
         with _mock_cache_get(None), _mock_http(200, req):
-            result = handler.testing_farm_get_ssh({"request_id": "req-1"})
+            result = handler.testing_farm_get_ssh({"request_id": REQ_ID})
             assert "error" in result
             assert result["state"] == "queued"
 
     def test_complete(self):
         req = {**SAMPLE_REQUEST, "state": "complete"}
         req["run"] = {"artifacts": "https://artifacts.example.com/req-1"}
-        with _mock_cache_get(None), _mock_http(200, req):
-            result = handler.testing_farm_get_ssh({"request_id": "req-1"})
+        with _mock_cache_get(None), _mock_http(200, req), _mock_cache_set():
+            result = handler.testing_farm_get_ssh({"request_id": REQ_ID})
             assert "error" in result
             assert result["state"] == "complete"
             assert "returned" in result["error"]
 
     def test_no_artifacts_url(self):
         req = {**SAMPLE_REQUEST, "run": {}}
-        with _mock_cache_get(None), _mock_http(200, req):
+        with _mock_cache_get(None), _mock_http(200, req), _mock_cache_set():
             try:
-                handler.testing_farm_get_ssh({"request_id": "req-1"})
+                handler.testing_farm_get_ssh({"request_id": REQ_ID})
                 assert False, "Should have raised"
             except Exception as e:
                 assert "artifacts" in str(e).lower()

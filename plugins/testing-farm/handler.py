@@ -25,6 +25,14 @@ ssh_keys = []
 
 API_VERSION = "v0.1"
 
+TERMINAL_STATES = {"complete", "error", "canceled"}
+NON_TERMINAL_STATES = {"new", "queued", "running", "cancel-requested"}
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
 
 def _send(msg):
     """Write a JSON message to stdout (core reads it)."""
@@ -145,6 +153,39 @@ def _discover_ssh_keys():
 
 
 # ---------------------------------------------------------------------------
+# Shared fetch
+# ---------------------------------------------------------------------------
+
+
+def _validate_request_id(request_id):
+    """Validate that request_id is a UUID."""
+    if not _UUID_RE.match(request_id):
+        raise Exception(f"Invalid request ID format: {request_id}")
+
+
+def _fetch_request(request_id):
+    """Fetch a request from the API, with caching.
+
+    Terminal states are cached for 1 hour. Non-terminal states are
+    never cached so callers always get fresh data.
+    """
+    cache_key = f"tf:raw:{request_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    status, body, _ = http("GET", f"/{API_VERSION}/requests/{request_id}")
+    if status != 200:
+        raise Exception(f"API error (HTTP {status}): {body}")
+
+    state = body.get("state", "")
+    if state in TERMINAL_STATES:
+        cache_set(cache_key, body, ttl=3600)
+
+    return body
+
+
+# ---------------------------------------------------------------------------
 # Read tools
 # ---------------------------------------------------------------------------
 
@@ -241,14 +282,9 @@ def _extract_result(req):
 def testing_farm_get_request(params):
     """Get detailed status of a test request."""
     request_id = params["request_id"]
+    _validate_request_id(request_id)
 
-    cached = cache_get(f"tf:request:{request_id}")
-    if cached:
-        return cached
-
-    status, body, _ = http("GET", f"/{API_VERSION}/requests/{request_id}")
-    if status != 200:
-        raise Exception(f"API error (HTTP {status}): {body}")
+    body = _fetch_request(request_id)
 
     envs = body.get("environments_requested", [])
     env0 = envs[0] if envs else {}
@@ -256,7 +292,7 @@ def testing_farm_get_request(params):
     run = body.get("run", {}) or {}
     artifacts_url = run.get("artifacts", "")
 
-    result = {
+    return {
         "id": body.get("id", ""),
         "state": body.get("state", ""),
         "result": _extract_result(body),
@@ -270,11 +306,6 @@ def testing_farm_get_request(params):
         "run_log": run.get("log", ""),
         "run_stages": [{"name": s.get("name", ""), "status": s.get("status", "")} for s in (run.get("stages") or [])],
     }
-
-    if result["state"] in ("complete", "error"):
-        cache_set(f"tf:request:{request_id}", result, ttl=3600)
-
-    return result
 
 
 def testing_farm_list_composes(_params):
@@ -352,15 +383,13 @@ def testing_farm_list_reservations(params):
 def testing_farm_get_ssh(params):
     """Extract SSH connection info for a reservation."""
     request_id = params["request_id"]
+    _validate_request_id(request_id)
 
     cached = cache_get(f"tf:ssh:{request_id}")
     if cached:
         return cached
 
-    # Get request details.
-    status, body, _ = http("GET", f"/{API_VERSION}/requests/{request_id}")
-    if status != 200:
-        raise Exception(f"API error (HTTP {status}): {body}")
+    body = _fetch_request(request_id)
 
     run = body.get("run", {}) or {}
     artifacts_url = run.get("artifacts", "")
@@ -533,14 +562,13 @@ def _extract_ip_from_console(text):
 def testing_farm_get_results(params):
     """Get test results for a completed request."""
     request_id = params["request_id"]
+    _validate_request_id(request_id)
 
     cached = cache_get(f"tf:results:{request_id}")
     if cached:
         return cached
 
-    status, body, _ = http("GET", f"/{API_VERSION}/requests/{request_id}")
-    if status != 200:
-        raise Exception(f"API error (HTTP {status}): {body}")
+    body = _fetch_request(request_id)
 
     result = body.get("result", {})
     xunit = result.get("xunit", "")
@@ -592,29 +620,18 @@ def _parse_xunit(xunit_xml):
 def testing_farm_get_logs(params):
     """Get log URLs for a request."""
     request_id = params["request_id"]
+    _validate_request_id(request_id)
 
-    cached = cache_get(f"tf:logs:{request_id}")
-    if cached:
-        return cached
-
-    status, body, _ = http("GET", f"/{API_VERSION}/requests/{request_id}")
-    if status != 200:
-        raise Exception(f"API error (HTTP {status}): {body}")
+    body = _fetch_request(request_id)
 
     run = body.get("run", {}) or {}
-    artifacts_url = run.get("artifacts", "")
 
-    result = {
+    return {
         "request_id": request_id,
         "state": body.get("state", ""),
         "pipeline_log": run.get("log", ""),
-        "artifacts_url": artifacts_url,
+        "artifacts_url": run.get("artifacts", ""),
     }
-
-    if result["state"] in ("complete", "error"):
-        cache_set(f"tf:logs:{request_id}", result, ttl=3600)
-
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -758,13 +775,14 @@ def testing_farm_submit_test(params):
 def testing_farm_cancel(params):
     """Cancel a test request or release a reservation."""
     request_id = params["request_id"]
+    _validate_request_id(request_id)
 
     status, body, _ = http("DELETE", f"/{API_VERSION}/requests/{request_id}")
     if status not in (200, 204):
         raise Exception(f"API error (HTTP {status}): {body}")
 
     # Invalidate cached data for this request.
-    for prefix in ("tf:request:", "tf:ssh:", "tf:results:", "tf:logs:"):
+    for prefix in ("tf:raw:", "tf:ssh:", "tf:results:"):
         cache_del(f"{prefix}{request_id}")
 
     return {
