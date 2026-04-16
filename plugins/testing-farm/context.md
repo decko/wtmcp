@@ -40,8 +40,16 @@ This applies to: `testing_farm_reserve`, `testing_farm_submit_test`.
 **User asks "what's the IP?" or "how do I connect?"** →
 `testing_farm_get_ssh` with the request ID
 
+**User asks "what's the status?"** →
+`testing_farm_get_request` — check the `state` field
+(new/queued/running/complete/error). The `result` field is
+`"pending"` until the request reaches a terminal state — this
+is normal, not an error.
+
 **User asks about test results** →
-`testing_farm_get_results` for the xunit summary,
+`testing_farm_get_results` — only useful when `state` is
+`complete`. Returns per-test pass/fail from xunit. Returns a
+status message for non-complete requests.
 `testing_farm_get_logs` for log URLs
 
 **User asks about available OS versions** →
@@ -109,8 +117,10 @@ ones (e.g., a teammate's key).
 1. `testing_farm_submit_test` with `dry_run: true` — preview
 2. Show the preview, confirm with the user
 3. `testing_farm_submit_test` with `dry_run: false` — submit
-4. `testing_farm_get_request` — poll for state changes
+4. `testing_farm_get_request` — poll for state changes (check
+   `state` field: new → queued → running → complete)
 5. `testing_farm_get_results` — get xunit results when complete
+   (only call after state is `complete`)
 6. `testing_farm_get_logs` — get log URLs for debugging failures
 
 The `git_url` must point to a git repo containing TMT test plans
@@ -130,8 +140,9 @@ Use `testing_farm_list_requests` with state filters:
 
 ### When SSH extraction fails
 
-`testing_farm_get_ssh` parses console logs from the artifacts
-server. If it returns "could not extract IP":
+`testing_farm_get_ssh` extracts the host from results.xml
+properties, guests.yaml, or console logs. If it returns an
+error:
 - The system may still be provisioning — wait and retry
 - Check `testing_farm_get_request` to verify state is "running"
 - The artifacts URL in the response can be shared with the user
