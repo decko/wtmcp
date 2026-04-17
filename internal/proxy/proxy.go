@@ -180,6 +180,7 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 		Headers:      responseHeaders(resp),
 		Body:         body,
 		BodyEncoding: encoding,
+		URL:          resp.Request.URL.String(),
 	}
 }
 
