@@ -52,7 +52,10 @@ type RetryConfig struct {
 }
 
 // RateLimitConfig controls request rate limiting.
+// Rates use the format "<number>/<unit>" where unit is s, m, or h.
+// Example: "60/m" = 60 requests per minute.
 type RateLimitConfig struct {
+	Global    string            `yaml:"global"`
 	Default   string            `yaml:"default"`
 	PerPlugin map[string]string `yaml:"per_plugin"`
 	PerDomain map[string]string `yaml:"per_domain"`
