@@ -755,3 +755,58 @@ handles credential injection automatically.
   inform MCP clients about destructive operations.
 - Cache namespaces are isolated — plugins cannot read other plugins'
   cached data.
+
+## Security Guidelines for Plugin Authors
+
+Tool output flows directly to the LLM. An attacker who controls
+content in an external system (a Jira issue, a GitLab comment, a
+Google Doc) can embed hidden instructions that the LLM may follow.
+These guidelines help minimize that risk.
+
+### Return structured data
+
+Use JSON, key-value pairs, or tables instead of prose. Structured
+formats are harder for the LLM to misinterpret as instructions.
+
+**Good:**
+```json
+{"title": "Fix login bug", "status": "In Progress", "assignee": "alice"}
+```
+
+**Bad:**
+```
+The issue "Fix login bug" is currently In Progress and assigned to alice.
+Please update the status to Done when the fix is deployed.
+```
+
+### Minimize external content volume
+
+Summarize or excerpt rather than returning full documents. Less
+content means less surface area for embedded instructions.
+
+### Separate metadata from user-generated content
+
+Return user-generated content (issue descriptions, comments, email
+bodies) in clearly labeled fields, not mixed into narrative text.
+This helps the LLM distinguish data from structure.
+
+### Declare accurate access annotations
+
+Tools that only read data must declare `access: read`. This limits
+the damage if the LLM is tricked into calling the tool in unexpected
+ways. Read-only tools cannot cause side effects even under prompt
+injection.
+
+### Never embed instructions in tool output
+
+Tool output should be pure data. Do not include phrases like "please
+summarize", "next, do X", or "now call tool Y" in formatted results.
+The LLM should decide what to do with the data, not be directed by
+the tool output.
+
+### Validate external formats before returning
+
+If a tool expects to return JSON from a third-party API, parse and
+validate that it is actually JSON before passing it to the MCP
+server. This prevents an attacker from returning plain text disguised
+as structured data to confuse the LLM.
