@@ -32,6 +32,7 @@ type Config struct {
 	Output         OutputConfig    `yaml:"output"`
 	Tools          ToolsConfig     `yaml:"tools"`
 	Stats          StatsConfig     `yaml:"stats"`
+	Audit          AuditConfig     `yaml:"audit"`
 	Providers      ProvidersConfig `yaml:"providers"`
 	Secrets        SecretsConfig   `yaml:"secrets"`
 }
@@ -99,6 +100,13 @@ type StatsConfig struct {
 	LogCalls      bool   `yaml:"log_calls"`
 	Persist       bool   `yaml:"persist"`
 	RetentionDays int    `yaml:"retention_days"`
+}
+
+// AuditConfig controls security audit logging.
+type AuditConfig struct {
+	LogFile     string   `yaml:"log_file"`
+	Stdout      bool     `yaml:"stdout"`
+	ScrubFields []string `yaml:"scrub_fields"`
 }
 
 // ProvidersConfig controls which auth providers are active.

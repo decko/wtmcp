@@ -12,6 +12,7 @@ import (
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/LeGambiArt/wtmcp/internal/audit"
 	"github.com/LeGambiArt/wtmcp/internal/config"
 	"github.com/LeGambiArt/wtmcp/internal/plugin"
 	"github.com/LeGambiArt/wtmcp/internal/stats"
@@ -30,12 +31,13 @@ type ControlWatcher struct {
 	cfg         *config.Config
 	index       *ToolIndex
 	collector   *stats.Collector
+	auditor     *audit.Logger
 	stop        chan struct{}
 	done        chan struct{}
 }
 
 // NewControlWatcher creates a control watcher for the given workdir.
-func NewControlWatcher(workdir string, srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector) *ControlWatcher {
+func NewControlWatcher(workdir string, srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger) *ControlWatcher {
 	controlDir := filepath.Join(workdir, "control")
 	return &ControlWatcher{
 		commandsDir: filepath.Join(controlDir, "commands"),
@@ -47,6 +49,7 @@ func NewControlWatcher(workdir string, srv *mcpserver.MCPServer, mgr *plugin.Man
 		cfg:         cfg,
 		index:       index,
 		collector:   collector,
+		auditor:     auditor,
 		stop:        make(chan struct{}),
 		done:        make(chan struct{}),
 	}
@@ -134,7 +137,7 @@ func (w *ControlWatcher) processCommand(filename string) {
 			result["status"] = "success"
 			var reloaded []string
 			for name := range w.mgr.Manifests() {
-				if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, name, w.index, w.collector); err != nil {
+				if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, name, w.index, w.collector, w.auditor); err != nil {
 					result["status"] = "partial"
 					result["error"] = fmt.Sprintf("failed to reload %s: %v", name, err)
 				} else {
@@ -143,7 +146,7 @@ func (w *ControlWatcher) processCommand(filename string) {
 			}
 			result["reloaded"] = reloaded
 		default:
-			if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, pluginName, w.index, w.collector); err != nil {
+			if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, pluginName, w.index, w.collector, w.auditor); err != nil {
 				result["status"] = "error"
 				result["error"] = err.Error()
 			} else {
