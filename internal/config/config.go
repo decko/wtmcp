@@ -32,6 +32,7 @@ type Config struct {
 	Output         OutputConfig    `yaml:"output"`
 	Tools          ToolsConfig     `yaml:"tools"`
 	Stats          StatsConfig     `yaml:"stats"`
+	Security       SecurityConfig  `yaml:"security"`
 	Audit          AuditConfig     `yaml:"audit"`
 	Providers      ProvidersConfig `yaml:"providers"`
 	Secrets        SecretsConfig   `yaml:"secrets"`
@@ -103,6 +104,11 @@ type StatsConfig struct {
 	LogCalls      bool   `yaml:"log_calls"`
 	Persist       bool   `yaml:"persist"`
 	RetentionDays int    `yaml:"retention_days"`
+}
+
+// SecurityConfig controls prompt injection defense features.
+type SecurityConfig struct {
+	TagToolOutput bool `yaml:"tag_tool_output"`
 }
 
 // AuditConfig controls security audit logging.
