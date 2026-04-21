@@ -499,6 +499,7 @@ func TestStripDangerousHeaders(t *testing.T) {
 		// These headers must have been stripped
 		stripped := []string{
 			"Cookie", "Authorization", "Proxy-Authorization",
+			"Private-Token", "X-Api-Key",
 			"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
 			"X-Real-Ip", "X-Original-Url", "X-Rewrite-Url",
 			"Connection", "Upgrade", "Transfer-Encoding",
@@ -527,6 +528,8 @@ func TestStripDangerousHeaders(t *testing.T) {
 			"Cookie":              "session=stolen",
 			"Authorization":       "Bearer stolen-token",
 			"Proxy-Authorization": "Basic creds",
+			"Private-Token":       "glpat-stolen",
+			"X-Api-Key":           "stolen-api-key",
 			"X-Forwarded-For":     "1.2.3.4",
 			"X-Forwarded-Host":    "evil.com",
 			"X-Forwarded-Proto":   "http",

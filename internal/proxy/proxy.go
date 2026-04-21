@@ -513,6 +513,8 @@ func StripAuthOnCrossDomainRedirect(req *http.Request, via []*http.Request) erro
 		if !strings.EqualFold(origHost, newHost) {
 			req.Header.Del("Authorization")
 			req.Header.Del("Cookie")
+			req.Header.Del("Private-Token")
+			req.Header.Del("X-Api-Key")
 		}
 	}
 	return nil
@@ -530,6 +532,8 @@ func StripAuthOnCrossDomainRedirect(req *http.Request, via []*http.Request) erro
 var dangerousHeaders = []string{
 	"Authorization",
 	"Proxy-Authorization",
+	"Private-Token",
+	"X-Api-Key",
 	"Host",
 	"Cookie",
 	"Set-Cookie",
