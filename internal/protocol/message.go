@@ -26,7 +26,8 @@ type Message struct {
 	Actions []Action        `json:"actions,omitempty"`
 
 	// init_ok fields
-	Domains []string `json:"domains,omitempty"`
+	Domains      []string          `json:"domains,omitempty"`
+	AuthBindings map[string]string `json:"auth_bindings,omitempty"`
 
 	// resource provider fields
 	URI       string        `json:"uri,omitempty"`

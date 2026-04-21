@@ -33,6 +33,7 @@ type Process struct {
 	state             State
 	Resources         []protocol.ResourceDef // resources discovered at init
 	Domains           []string               // dynamic domains from init_ok
+	AuthBindings      map[string]string      // per-domain auth bindings from init_ok
 	initTimeout       time.Duration
 	shutdownTimeout   time.Duration
 	shutdownKillAfter time.Duration
@@ -130,6 +131,7 @@ func (p *Process) Start(ctx context.Context) error {
 			return fmt.Errorf("plugin %s init failed: %s", p.manifest.Name, errMsg)
 		}
 		p.Domains = resp.Domains
+		p.AuthBindings = resp.AuthBindings
 	}
 
 	// Query resources from resource provider plugins

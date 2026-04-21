@@ -64,6 +64,15 @@ func (h *Handle) InitDomains() []string {
 	return h.process.Domains
 }
 
+// AuthBindings returns per-domain auth bindings registered during
+// plugin init. Keys are domain names, values are env var names.
+func (h *Handle) AuthBindings() map[string]string {
+	if h.process == nil {
+		return nil
+	}
+	return h.process.AuthBindings
+}
+
 // IsReady returns true if the handle can accept tool calls.
 // Non-persistent (oneshot) plugins are always ready; persistent
 // plugins are ready once Start has been called and succeeded.

@@ -47,6 +47,7 @@ type Plugin struct {
 	nextID       atomic.Int64
 	initFn       func(config json.RawMessage) error
 	initDomains  []string
+	authBindings map[string]string
 	resourceList ResourceListFunc
 	resourceRead ResourceReadFunc
 	logger       *log.Logger
@@ -82,6 +83,18 @@ func (p *Plugin) OnInit(fn func(config json.RawMessage) error) {
 // Only effective for persistent plugins (oneshot plugins have no init).
 func (p *Plugin) SetInitDomains(domains []string) {
 	p.initDomains = domains
+}
+
+// SetAuthBindings declares per-domain auth token bindings. The map
+// keys are domain names, values are env var names containing tokens.
+// The core resolves env var names from the plugin's credential group
+// and creates per-domain auth providers.
+//
+// Call from within the OnInit callback. Only effective for persistent
+// plugins. Domains in auth bindings should also be registered via
+// SetInitDomains for proxy allowlisting.
+func (p *Plugin) SetAuthBindings(bindings map[string]string) {
+	p.authBindings = bindings
 }
 
 // OnListResources registers a function that returns the plugin's resources.
@@ -141,7 +154,7 @@ func (p *Plugin) handleInit(msg Message) {
 			return
 		}
 	}
-	p.send(Message{ID: msg.ID, Type: TypeInitOK, Domains: p.initDomains})
+	p.send(Message{ID: msg.ID, Type: TypeInitOK, Domains: p.initDomains, AuthBindings: p.authBindings})
 }
 
 func (p *Plugin) handleToolCall(msg Message) {
