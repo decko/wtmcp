@@ -7,6 +7,15 @@ handler: ./handler
 credential_group: gitlab
 env_passthrough: all
 
+services:
+  auth:
+    type: bearer
+    token: "${GITLAB_TOKEN}"
+    header: PRIVATE-TOKEN
+    prefix: "none"
+  http:
+    base_url: "${GITLAB_URL}"
+
 context_files:
   - context.md
 
@@ -14,7 +23,6 @@ env:
   # Listed for documentation; not used as filter when env_passthrough is "all"
   - GITLAB_TOKEN
   - GITLAB_URL
-  - GITLAB_SSL_VERIFY
 
 tools:
   - name: gitlab_get_commits
