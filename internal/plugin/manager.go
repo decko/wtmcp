@@ -1181,6 +1181,11 @@ func (m *Manager) resolveAuth(pluginName string, manifest *Manifest) auth.Provid
 		return nil
 	}
 
+	credDir := m.cfg.CredentialsDir
+	if credDir != "" && manifest.CredentialGroup != "" {
+		credDir = filepath.Join(credDir, manifest.CredentialGroup)
+	}
+
 	vars := m.pluginVars(manifest)
 	resolve := func(s string) string { return config.ResolveVars(s, vars) }
 
@@ -1222,7 +1227,7 @@ func (m *Manager) resolveAuth(pluginName string, manifest *Manifest) auth.Provid
 				Scopes:          v.Scopes,
 				CredentialsFile: decryptCredFile(resolve(v.CredentialsFile)),
 				TokenFile:       resolve(v.TokenFile),
-				CredentialsDir:  m.cfg.CredentialsDir,
+				CredentialsDir:  credDir,
 				TokenURL:        resolve(v.TokenURL),
 				ClientID:        resolve(v.ClientID),
 			}
@@ -1244,7 +1249,7 @@ func (m *Manager) resolveAuth(pluginName string, manifest *Manifest) auth.Provid
 				Scopes:          authCfg.Scopes,
 				CredentialsFile: decryptCredFile(resolve(authCfg.CredentialsFile)),
 				TokenFile:       resolve(authCfg.TokenFile),
-				CredentialsDir:  m.cfg.CredentialsDir,
+				CredentialsDir:  credDir,
 				TokenURL:        resolve(authCfg.TokenURL),
 				ClientID:        resolve(authCfg.ClientID),
 			},
