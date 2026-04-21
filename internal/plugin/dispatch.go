@@ -21,6 +21,11 @@ type CallToolResult struct {
 	Actions []protocol.Action
 }
 
+const (
+	maxRestartsPerWindow = 3
+	restartWindow        = time.Minute
+)
+
 // Handle wraps a plugin process and serializes tool calls based on
 // the plugin's concurrency setting.
 type Handle struct {
@@ -32,8 +37,10 @@ type Handle struct {
 	sbMgr       *sandbox.Manager
 	mu          sync.Mutex   // serialize tool calls for concurrency:1
 	resMu       sync.RWMutex // protects resources
+	restartMu   sync.Mutex   // protects restarts slice
 	resources   []protocol.ResourceDef
 	toolTimeout time.Duration
+	restarts    []time.Time // timestamps of recent auto-restarts
 }
 
 // NewHandle creates a Handle for dispatching tool calls to a plugin.
@@ -112,9 +119,18 @@ func (h *Handle) CallTool(ctx context.Context, toolName string, params json.RawM
 		defer h.mu.Unlock()
 	}
 
-	// Auto-restart crashed persistent plugins
+	// Auto-restart crashed persistent plugins (rate-limited).
+	// restartAllowed/recordRestart access h.restarts under h.restartMu
+	// (separate from h.mu to be safe for concurrency > 1 plugins).
 	if h.manifest.Execution == "persistent" && h.process != nil && h.process.State() == StateFailed {
+		if !h.restartAllowed() {
+			return nil, &protocol.Error{
+				Code:    "restart_suppressed",
+				Message: fmt.Sprintf("%s crashed too many times (%d in %s), not restarting; use plugin_reload to retry", h.manifest.Name, maxRestartsPerWindow, restartWindow),
+			}
+		}
 		log.Printf("[%s] auto-restarting crashed plugin", h.manifest.Name)
+		h.recordRestart()
 		if err := h.Start(ctx); err != nil {
 			return nil, &protocol.Error{
 				Code:    "restart_failed",
@@ -346,6 +362,38 @@ func (h *Handle) SetResources(resources []protocol.ResourceDef) {
 	h.resMu.Lock()
 	defer h.resMu.Unlock()
 	h.resources = resources
+}
+
+func (h *Handle) restartAllowed() bool {
+	h.restartMu.Lock()
+	defer h.restartMu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-restartWindow)
+	recent := 0
+	for _, t := range h.restarts {
+		if t.After(cutoff) {
+			recent++
+		}
+	}
+	return recent < maxRestartsPerWindow
+}
+
+func (h *Handle) recordRestart() {
+	h.restartMu.Lock()
+	defer h.restartMu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-restartWindow)
+	h.restarts = append(h.pruneRestarts(cutoff), now)
+}
+
+func (h *Handle) pruneRestarts(cutoff time.Time) []time.Time {
+	var kept []time.Time
+	for _, t := range h.restarts {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	return kept
 }
 
 func forwardStderr(r interface{ Read([]byte) (int, error) }, pluginName string) {
