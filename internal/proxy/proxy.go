@@ -117,6 +117,18 @@ func (p *Proxy) AddAllowedDomains(pluginName string, domains []string) {
 	pa.AllowedDomains = append(pa.AllowedDomains, domains...)
 }
 
+// SetPluginProvider replaces the auth provider for a plugin. Used by
+// the manager to install a DomainProvider after init_ok auth bindings
+// are resolved. Must be called after RegisterPlugin.
+func (p *Proxy) SetPluginProvider(pluginName string, provider auth.Provider) {
+	pa, ok := p.plugins[pluginName]
+	if !ok {
+		log.Printf("proxy: SetPluginProvider for unknown plugin %q", pluginName)
+		return
+	}
+	pa.Provider = provider
+}
+
 func (p *Proxy) auditHTTP(ctx context.Context, pluginName, method, rawURL string, status int, size int64) {
 	if p.auditor == nil {
 		return

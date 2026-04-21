@@ -378,6 +378,7 @@ func (m *Manager) startLevel(ctx context.Context, names []string) {
 		log.Printf("loaded plugin %s (v%s, %s, %s)", r.name,
 			r.handle.manifest.Version, r.handle.manifest.Execution, r.duration.Round(time.Millisecond))
 		m.registerDynamicDomains(r.name, r.handle)
+		m.registerAuthBindings(r.name, r.handle)
 	}
 	m.handlesMu.Unlock()
 }
@@ -398,6 +399,7 @@ func (m *Manager) Load(ctx context.Context, name string) error {
 	}
 
 	m.registerDynamicDomains(name, handle)
+	m.registerAuthBindings(name, handle)
 
 	m.handlesMu.Lock()
 	m.handles[name] = handle
@@ -436,6 +438,75 @@ func (m *Manager) registerDynamicDomains(name string, handle *Handle) {
 		m.proxy.AddAllowedDomains(name, valid)
 		log.Printf("[%s] registered dynamic domains: %v", name, valid)
 	}
+}
+
+// registerAuthBindings resolves per-domain auth bindings from the
+// plugin's init_ok response and installs a DomainProvider on the
+// proxy. Must be called after registerDynamicDomains (ordering
+// invariant: domains are allowed before auth is installed).
+func (m *Manager) registerAuthBindings(name string, handle *Handle) {
+	bindings := handle.AuthBindings()
+	if len(bindings) == 0 {
+		return
+	}
+
+	if len(bindings) > maxDynamicDomains {
+		log.Printf("[%s] WARNING: init_ok declared %d auth bindings, capped at %d",
+			name, len(bindings), maxDynamicDomains)
+		capped := make(map[string]string, maxDynamicDomains)
+		for domain, envVar := range bindings {
+			capped[domain] = envVar
+			if len(capped) >= maxDynamicDomains {
+				break
+			}
+		}
+		bindings = capped
+	}
+
+	manifest := handle.manifest
+	authCfg := manifest.Services.Auth
+	if authCfg.Type == "" {
+		log.Printf("[%s] WARNING: auth_bindings present but no services.auth configured; ignoring", name)
+		return
+	}
+
+	vars := m.pluginVars(manifest)
+	resolve := func(s string) string { return config.ResolveVars(s, vars) }
+
+	providers := make(map[string]auth.Provider, len(bindings))
+	for domain, envVar := range bindings {
+		if err := validateDomain(domain); err != nil {
+			log.Printf("[%s] rejected auth binding domain %q: %v", name, domain, err)
+			continue
+		}
+
+		token := resolve("${" + envVar + "}")
+		if token == "" {
+			log.Printf("[%s] WARNING: auth binding %q → $%s resolved to empty; skipping", name, domain, envVar)
+			continue
+		}
+
+		p, err := auth.NewBearerProvider(token, authCfg.Header, authCfg.Prefix)
+		if err != nil {
+			log.Printf("[%s] WARNING: auth binding %q: %v", name, domain, err)
+			continue
+		}
+		providers[domain] = p
+	}
+
+	if len(providers) == 0 {
+		log.Printf("[%s] WARNING: no valid auth bindings resolved", name)
+		return
+	}
+
+	dp, err := auth.NewDomainProvider(providers)
+	if err != nil {
+		log.Printf("[%s] WARNING: create domain provider: %v", name, err)
+		return
+	}
+
+	m.proxy.SetPluginProvider(name, dp)
+	log.Printf("[%s] installed per-domain auth for %d domain(s)", name, len(providers))
 }
 
 // preparePlugin resolves config, registers with the proxy, and creates
