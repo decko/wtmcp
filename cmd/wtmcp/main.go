@@ -226,8 +226,12 @@ func run() error {
 		}
 	}
 
+	auditLogFile := config.ResolveEnvVars(cfg.Audit.LogFile)
+	if auditLogFile == "" {
+		auditLogFile = filepath.Join(wd, "logs", "audit.log")
+	}
 	auditor, err := audit.New(audit.Config{
-		LogFile:     config.ResolveEnvVars(cfg.Audit.LogFile),
+		LogFile:     auditLogFile,
 		Stdout:      cfg.Audit.Stdout,
 		ScrubFields: cfg.Audit.ScrubFields,
 	})
