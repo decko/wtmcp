@@ -23,6 +23,7 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/plugin"
 	"github.com/LeGambiArt/wtmcp/internal/proxy"
 	"github.com/LeGambiArt/wtmcp/internal/ratelimit"
+	"github.com/LeGambiArt/wtmcp/internal/sandbox"
 	"github.com/LeGambiArt/wtmcp/internal/secrets/vault"
 	"github.com/LeGambiArt/wtmcp/internal/server"
 	"github.com/LeGambiArt/wtmcp/internal/stats"
@@ -192,6 +193,14 @@ func run() error {
 	httpProxy := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
 
 	mgr := plugin.NewManager(authReg, httpProxy, cacheStore, cfg, envResult.Groups, envResult.Errors, envResult.DirError, wd, envDir, envOpts, sessionDir)
+
+	dataDir := filepath.Join(wd, "data")
+	sbMgr, err := sandbox.NewManager(cfg.Sandbox, cfg.CredentialsDir, dataDir)
+	if err != nil {
+		return fmt.Errorf("sandbox init: %w", err)
+	}
+	defer sbMgr.Close()
+	mgr.SetSandbox(sbMgr)
 
 	if err := mgr.Discover(cfg.PluginDirs, cfg.UserPluginDir); err != nil {
 		return fmt.Errorf("plugin discovery: %w", err)

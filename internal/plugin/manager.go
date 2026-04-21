@@ -19,6 +19,7 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/config"
 	"github.com/LeGambiArt/wtmcp/internal/protocol"
 	"github.com/LeGambiArt/wtmcp/internal/proxy"
+	"github.com/LeGambiArt/wtmcp/internal/sandbox"
 	"github.com/LeGambiArt/wtmcp/internal/secrets/securefile"
 	"github.com/LeGambiArt/wtmcp/internal/secrets/vault"
 )
@@ -53,6 +54,7 @@ type Manager struct {
 	proxy          *proxy.Proxy
 	cache          cache.Store
 	cfg            *config.Config
+	sbMgr          *sandbox.Manager
 	svcHandler     *serviceHandlerImpl
 	loadDone       chan struct{} // closed when LoadAll completes
 	pending        [][]string    // prepared plugin levels awaiting Start
@@ -94,6 +96,13 @@ func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *conf
 		svcHandler:     &serviceHandlerImpl{proxy: p, cache: c},
 		loadDone:       make(chan struct{}),
 	}
+}
+
+// SetSandbox configures the sandbox manager. When set, all plugin
+// processes are launched in arapuca sandboxes. Must be called before
+// LoadAll.
+func (m *Manager) SetSandbox(sb *sandbox.Manager) {
+	m.sbMgr = sb
 }
 
 // Discover scans directories for plugin.yaml files and loads manifests.
@@ -656,7 +665,11 @@ func (m *Manager) preparePlugin(name string) (*Handle, error) {
 		MaxMessageSize:    int(m.cfg.Plugins.MaxMessageSize),
 	}
 
-	return NewHandle(manifest, m.svcHandler, processCfg, m.cfg.Plugins.ToolCallTimeout, vars), nil
+	handle := NewHandle(manifest, m.svcHandler, processCfg, m.cfg.Plugins.ToolCallTimeout, vars)
+	if m.sbMgr != nil {
+		handle.SetSandbox(m.sbMgr)
+	}
+	return handle, nil
 }
 
 // Unload stops a plugin. Removes the handle from the map before

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/LeGambiArt/wtmcp/internal/protocol"
 	"log"
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/LeGambiArt/wtmcp/internal/protocol"
+	"github.com/LeGambiArt/wtmcp/internal/sandbox"
 )
 
 // CallToolResult holds the result of a tool call along with any actions.
@@ -26,6 +28,7 @@ type Handle struct {
 	handler     ServiceHandler
 	groupVars   map[string]string
 	processCfg  ProcessConfig
+	sbMgr       *sandbox.Manager
 	mu          sync.Mutex   // serialize tool calls for concurrency:1
 	resMu       sync.RWMutex // protects resources
 	resources   []protocol.ResourceDef
@@ -43,9 +46,17 @@ func NewHandle(manifest *Manifest, handler ServiceHandler, cfg ProcessConfig, to
 	}
 }
 
+// SetSandbox configures the sandbox manager for this handle's processes.
+func (h *Handle) SetSandbox(sb *sandbox.Manager) {
+	h.sbMgr = sb
+}
+
 // Start launches the plugin process.
 func (h *Handle) Start(ctx context.Context) error {
 	h.process = NewProcess(h.manifest, h.handler, h.processCfg, h.groupVars)
+	if h.sbMgr != nil {
+		h.process.SetSandbox(h.sbMgr)
+	}
 	if err := h.process.Start(ctx); err != nil {
 		return err
 	}
