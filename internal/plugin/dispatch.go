@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os/exec"
 	"sync"
@@ -191,30 +192,62 @@ func (h *Handle) callOneshot(ctx context.Context, toolName string, params json.R
 	ctx, cancel := context.WithTimeout(ctx, h.toolTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, h.manifest.HandlerPath()) //nolint:gosec // handler path validated by Manifest.Validate()
-	cmd.Dir = h.manifest.Dir
-	cmd.Env = buildPluginEnv(h.manifest, h.groupVars)
+	var stdin io.WriteCloser
+	var stdout io.ReadCloser
+	var stderr io.ReadCloser
+	var cleanup func()
 
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, fmt.Errorf("stdin pipe: %w", err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("stderr pipe: %w", err)
-	}
+	if h.sbMgr != nil && h.sbMgr.Enabled() {
+		env := buildPluginEnvMap(h.manifest, h.groupVars)
+		sbProc, err := h.sbMgr.Launch(ctx, sandbox.PluginInfo{
+			Name:            h.manifest.Name,
+			Dir:             h.manifest.Dir,
+			Handler:         h.manifest.Handler,
+			CredentialGroup: h.manifest.CredentialGroup,
+		}, env)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox launch: %w", err)
+		}
+		stdin = sbProc.Stdin()
+		stdout = sbProc.Stdout()
+		stderr = sbProc.Stderr()
+		cleanup = func() {
+			stdin.Close() //nolint:errcheck,gosec // best effort
+			sbProc.Wait() //nolint:errcheck,gosec // reap process
+			sbProc.Cleanup()
+			h.sbMgr.CleanupTmpDir(h.manifest.Name)
+		}
+	} else {
+		if h.sbMgr != nil {
+			log.Printf("[%s] WARNING: sandbox disabled — oneshot process is not isolated", h.manifest.Name)
+		}
+		cmd := exec.CommandContext(ctx, h.manifest.HandlerPath()) //nolint:gosec // handler path validated by Manifest.Validate()
+		cmd.Dir = h.manifest.Dir
+		cmd.Env = buildPluginEnv(h.manifest, h.groupVars)
 
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start oneshot handler: %w", err)
+		var err error
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			return nil, fmt.Errorf("stdin pipe: %w", err)
+		}
+		stdout, err = cmd.StdoutPipe()
+		if err != nil {
+			return nil, fmt.Errorf("stdout pipe: %w", err)
+		}
+		stderr, err = cmd.StderrPipe()
+		if err != nil {
+			return nil, fmt.Errorf("stderr pipe: %w", err)
+		}
+
+		if err := cmd.Start(); err != nil {
+			return nil, fmt.Errorf("start oneshot handler: %w", err)
+		}
+		cleanup = func() {
+			stdin.Close() //nolint:errcheck,gosec // best effort
+			cmd.Wait()    //nolint:errcheck,gosec // reap child
+		}
 	}
-	defer func() {
-		stdin.Close() //nolint:errcheck,gosec // best effort
-		cmd.Wait()    //nolint:errcheck,gosec // reap child
-	}()
+	defer cleanup()
 
 	go forwardStderr(stderr, h.manifest.Name)
 
