@@ -803,7 +803,10 @@ handles credential injection automatically.
 - **env.d file permissions** are enforced (0600 files, 0700 dir) —
   the server refuses to start if they are world-readable.
 - **Tool access annotations** (`access: read` / `access: write`)
-  inform MCP clients about destructive operations.
+  inform MCP clients about destructive operations. Read-only tools
+  are **enforced** at the proxy layer: `access: read` tools can
+  only make GET, HEAD, and OPTIONS requests. POST, PUT, PATCH,
+  and DELETE are rejected with `method_not_allowed`.
 - Cache namespaces are isolated — plugins cannot read other plugins'
   cached data.
 
