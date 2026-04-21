@@ -100,7 +100,7 @@ func ResolveVariant(cfg VariantConfig) (Provider, error) {
 func providerFromConfig(typeName string, cfg SingleAuthConfig) (Provider, error) {
 	switch typeName {
 	case "bearer":
-		return NewBearerProvider(cfg.Token, cfg.Header, cfg.Prefix), nil
+		return NewBearerProvider(cfg.Token, cfg.Header, cfg.Prefix)
 	case "basic":
 		return NewBasicProvider(cfg.Username, cfg.Password), nil
 	case "kerberos/spnego":

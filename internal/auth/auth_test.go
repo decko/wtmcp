@@ -7,7 +7,7 @@ import (
 )
 
 func TestBearerProvider(t *testing.T) {
-	p := NewBearerProvider("my-token", "", "")
+	p, _ := NewBearerProvider("my-token", "", "")
 
 	if p.Name() != "bearer" {
 		t.Errorf("Name() = %q, want %q", p.Name(), "bearer")
@@ -30,7 +30,7 @@ func TestBearerProvider(t *testing.T) {
 }
 
 func TestBearerProviderCustomHeader(t *testing.T) {
-	p := NewBearerProvider("tok", "X-API-Key", "Token")
+	p, _ := NewBearerProvider("tok", "X-API-Key", "Token")
 
 	headers, err := p.Authenticate(context.Background(), nil)
 	if err != nil {
@@ -42,13 +42,49 @@ func TestBearerProviderCustomHeader(t *testing.T) {
 }
 
 func TestBearerProviderEmpty(t *testing.T) {
-	p := NewBearerProvider("", "", "")
+	p, _ := NewBearerProvider("", "", "")
 	if p.Available() {
 		t.Error("should not be available without token")
 	}
 	_, err := p.Authenticate(context.Background(), nil)
 	if err == nil {
 		t.Error("should error without token")
+	}
+}
+
+func TestBearerProviderNoPrefix(t *testing.T) {
+	p, err := NewBearerProvider("glpat-xxx", "Private-Token", "none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, err := p.Authenticate(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := headers.Get("Private-Token")
+	if got != "glpat-xxx" {
+		t.Errorf("Private-Token = %q, want %q", got, "glpat-xxx")
+	}
+}
+
+func TestBearerProviderNoPrefixCaseInsensitive(t *testing.T) {
+	p, err := NewBearerProvider("tok", "X-Custom", "None")
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, _ := p.Authenticate(context.Background(), nil)
+	if got := headers.Get("X-Custom"); got != "tok" {
+		t.Errorf("got %q, want %q", got, "tok")
+	}
+}
+
+func TestBearerProviderBlockedHeader(t *testing.T) {
+	blocked := []string{"Host", "Cookie", "Connection", "X-Forwarded-For"}
+	for _, h := range blocked {
+		_, err := NewBearerProvider("tok", h, "")
+		if err == nil {
+			t.Errorf("NewBearerProvider with header %q should fail", h)
+		}
 	}
 }
 
@@ -88,7 +124,7 @@ func TestBasicProviderEmpty(t *testing.T) {
 func TestRegistry(t *testing.T) {
 	r := NewRegistry()
 
-	bearer := NewBearerProvider("tok", "", "")
+	bearer, _ := NewBearerProvider("tok", "", "")
 	r.Register(bearer)
 
 	if !r.Has("bearer") {

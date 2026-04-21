@@ -108,7 +108,7 @@ func TestExecuteWithAuth(t *testing.T) {
 
 	p := newTestProxy(srv.Client())
 	pa := testPluginAuth(srv.URL)
-	pa.Provider = auth.NewBearerProvider("test-token", "", "")
+	pa.Provider, _ = auth.NewBearerProvider("test-token", "", "")
 	p.RegisterPlugin("test", pa)
 
 	resp := p.Execute(context.Background(), "test", protocol.Message{
@@ -705,7 +705,7 @@ func TestAllowPrivateIPsWithAuth(t *testing.T) {
 
 	paAuth := testPluginAuth(srv.URL)
 	paAuth.AllowPrivateIPs = true
-	paAuth.Provider = auth.NewBearerProvider("private-token", "", "")
+	paAuth.Provider, _ = auth.NewBearerProvider("private-token", "", "")
 	p.RegisterPlugin("priv-auth", paAuth)
 
 	resp := p.Execute(context.Background(), "priv-auth", protocol.Message{
@@ -753,7 +753,7 @@ func TestNoAuthSkipsAuthInjection(t *testing.T) {
 
 	p := newTestProxy(srv.Client())
 	pa := testPluginAuth(srv.URL)
-	pa.Provider = auth.NewBearerProvider("secret-token", "", "")
+	pa.Provider, _ = auth.NewBearerProvider("secret-token", "", "")
 	p.RegisterPlugin("test", pa)
 
 	resp := p.Execute(context.Background(), "test", protocol.Message{
@@ -772,7 +772,7 @@ func TestNoAuthSkipsAuthInjection(t *testing.T) {
 func TestNoAuthAllowsHTTPWithHeaderAuth(t *testing.T) {
 	p := newTestProxy(nil)
 	pa := testPluginAuth("https://api.example.com")
-	pa.Provider = auth.NewBearerProvider("token", "", "")
+	pa.Provider, _ = auth.NewBearerProvider("token", "", "")
 	p.RegisterPlugin("test", pa)
 
 	resp := p.Execute(context.Background(), "test", protocol.Message{
