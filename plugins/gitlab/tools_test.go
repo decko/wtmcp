@@ -219,14 +219,14 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 }
 
 // setupGitLabTest creates a test HTTP server and injects it as the
-// default GitLab instance. The handler function receives the request
-// path (URL-decoded) for matching.
+// default GitLab instance. Uses empty token to match production
+// behavior where the core proxy injects PRIVATE-TOKEN.
 func setupGitLabTest(t *testing.T, handler func(w http.ResponseWriter, r *http.Request)) {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(handler))
 	t.Cleanup(ts.Close)
 
-	client, err := gogitlab.NewClient("test-token", gogitlab.WithBaseURL(ts.URL+"/api/v4"))
+	client, err := gogitlab.NewClient("", gogitlab.WithBaseURL(ts.URL+"/api/v4"))
 	if err != nil {
 		t.Fatal(err)
 	}

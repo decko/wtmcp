@@ -13,7 +13,7 @@ func main() {
 	p := handler.New()
 
 	p.OnInit(func(_ json.RawMessage) error {
-		if err := discoverInstances(); err != nil {
+		if err := discoverInstances(p); err != nil {
 			return err
 		}
 		for _, inst := range instances {
