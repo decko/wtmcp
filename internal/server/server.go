@@ -20,6 +20,7 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/plugin"
 	"github.com/LeGambiArt/wtmcp/internal/pluginctx"
 	"github.com/LeGambiArt/wtmcp/internal/protocol"
+	"github.com/LeGambiArt/wtmcp/internal/proxy"
 	"github.com/LeGambiArt/wtmcp/internal/ratelimit"
 	"github.com/LeGambiArt/wtmcp/internal/stats"
 )
@@ -92,6 +93,7 @@ func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest
 		fallback := toonFallback
 		plugName := manifest.Name
 		isRead := toolDef.IsReadOnly()
+		toolAccess := toolDef.Access
 
 		validator, err := plugin.CompileParamsSchema(toolName, toolDef)
 		if err != nil {
@@ -113,6 +115,9 @@ func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest
 			}
 
 			ctx = audit.WithCorrelationID(ctx)
+			if toolAccess != "" {
+				ctx = proxy.WithToolAccess(ctx, toolAccess)
+			}
 			start := time.Now()
 			var inputRaw []byte
 			var outputText string

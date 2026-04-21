@@ -196,6 +196,15 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 		}
 	}
 
+	method := strings.ToUpper(req.Method)
+	if method == "" {
+		method = http.MethodGet
+	}
+	if access := toolAccessFromContext(ctx); access == "read" && !isReadOnlyMethod(method) {
+		return errResponse(req.ID, "method_not_allowed",
+			fmt.Sprintf("read-only tool cannot use %s method", method))
+	}
+
 	httpReq, err := p.buildRequest(ctx, fullURL, req)
 	if err != nil {
 		return errResponse(req.ID, "build_request", err.Error())
