@@ -2,16 +2,28 @@
 
 ## Tool Usage Guidelines
 
-### Instance Configuration
+### Multi-Instance Support
 
-This plugin connects to a single GitLab instance configured via
-environment variables:
+This plugin supports multiple GitLab instances. Each tool has an
+optional `instance` parameter:
 
-- `GITLAB_TOKEN` — personal access token (handled by core auth)
-- `GITLAB_URL` — base URL (defaults to `https://gitlab.com`)
+- If only one instance is configured, `instance` can be omitted
+- With multiple instances, pass the instance name explicitly
+
+**Example with multiple instances:**
+```
+gitlab_get_commits(instance="internal", project_id="team/myproject")
+gitlab_list_merge_requests(instance="public", scope="assigned_to_me")
+```
+
+Instances are discovered from environment variables:
+- `GITLAB_TOKEN` + `GITLAB_URL` → single instance (default)
+- `GITLAB_PUBLIC_TOKEN` + `GITLAB_PUBLIC_URL` → instance "public"
+- `GITLAB_INTERNAL_TOKEN` + `GITLAB_INTERNAL_URL` → instance "internal"
 
 Authentication is handled by the core HTTP proxy — the plugin
-does not access the token directly.
+does not access tokens directly. For multi-instance, per-domain
+auth binding routes the correct token to each GitLab server.
 
 ### Project IDs
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -24,38 +25,112 @@ var instances map[string]*instance
 // or when no instance param is provided.
 var defaultInstance string
 
-// discoverInstances sets up a single GitLab client using the core's
-// HTTP proxy for auth and transport. The core injects PRIVATE-TOKEN
-// headers via the BearerProvider configured in plugin.yaml.
+// discoverInstances sets up GitLab clients using the core's HTTP
+// proxy for auth and transport. Supports both single-instance
+// (GITLAB_TOKEN + GITLAB_URL) and multi-instance
+// (GITLAB_{NAME}_TOKEN + GITLAB_{NAME}_URL).
 //
-// Multi-instance is not supported under proxy mode because the proxy
-// has a single auth provider — it cannot inject different tokens for
-// different domains. Multi-instance users must wait for per-domain
-// auth binding.
+// For multi-instance, per-domain auth bindings are registered so
+// the core proxy injects the correct PRIVATE-TOKEN per domain.
+// The go-gitlab SDK sends an empty Private-Token header which the
+// proxy strips before re-injecting the real token.
 func discoverInstances(p *handler.Plugin) error {
 	instances = make(map[string]*instance)
 	defaultInstance = ""
 
-	// Detect multi-instance configuration and reject it.
-	if names := detectMultiInstance(); len(names) > 0 {
-		return fmt.Errorf(
-			"multi-instance (%s) is not supported under proxy mode; "+
-				"use single GITLAB_TOKEN + GITLAB_URL instead",
-			strings.Join(names, ", "),
+	transport := handler.NewProxyTransport(p)
+
+	multi := scanMultiInstance()
+
+	if len(multi) > 0 {
+		return setupMultiInstance(p, transport.Client(), multi)
+	}
+	return setupSingleInstance(p, transport.Client())
+}
+
+// multiInstanceEntry holds a discovered multi-instance configuration.
+type multiInstanceEntry struct {
+	Name     string
+	URL      string
+	TokenVar string
+}
+
+// scanMultiInstance scans the environment for GITLAB_{NAME}_TOKEN
+// patterns that indicate multi-instance configuration.
+func scanMultiInstance() []multiInstanceEntry {
+	var entries []multiInstanceEntry
+	for _, env := range os.Environ() {
+		key, value, ok := strings.Cut(env, "=")
+		if !ok || value == "" {
+			continue
+		}
+		if !strings.HasPrefix(key, "GITLAB_") || !strings.HasSuffix(key, "_TOKEN") {
+			continue
+		}
+		if key == "GITLAB_TOKEN" || key == "GITLAB_SSL_VERIFY" {
+			continue
+		}
+
+		name := strings.ToLower(key[7 : len(key)-6])
+		if name == "" {
+			continue
+		}
+
+		urlKey := fmt.Sprintf("GITLAB_%s_URL", strings.ToUpper(name))
+		gitlabURL := os.Getenv(urlKey)
+		if gitlabURL == "" {
+			gitlabURL = "https://gitlab.com"
+		}
+
+		entries = append(entries, multiInstanceEntry{
+			Name:     name,
+			URL:      gitlabURL,
+			TokenVar: key,
+		})
+	}
+	return entries
+}
+
+func setupMultiInstance(p *handler.Plugin, httpClient *http.Client, entries []multiInstanceEntry) error {
+	var domains []string
+	authBindings := make(map[string]string, len(entries))
+
+	for _, e := range entries {
+		client, err := gogitlab.NewClient("",
+			gogitlab.WithBaseURL(e.URL),
+			gogitlab.WithHTTPClient(httpClient),
 		)
+		if err != nil {
+			return fmt.Errorf("instance %s: %w", e.Name, err)
+		}
+		instances[e.Name] = &instance{Name: e.Name, URL: e.URL, Client: client}
+
+		if host := extractHost(e.URL); host != "" {
+			domains = append(domains, host)
+			authBindings[host] = e.TokenVar
+		}
 	}
 
+	if len(instances) == 1 {
+		for name := range instances {
+			defaultInstance = name
+		}
+	}
+
+	p.SetInitDomains(domains)
+	p.SetAuthBindings(authBindings)
+
+	return nil
+}
+
+// setupSingleInstance uses the static services.auth token from
+// plugin.yaml — no auth bindings needed (single token, single domain).
+func setupSingleInstance(p *handler.Plugin, httpClient *http.Client) error {
 	gitlabURL := os.Getenv("GITLAB_URL")
 	if gitlabURL == "" {
 		gitlabURL = "https://gitlab.com"
 	}
 
-	httpClient := handler.NewProxyTransport(p).Client()
-
-	// Empty token: the go-gitlab SDK sends "Private-Token: " (empty)
-	// on every request. The core proxy strips it (Private-Token is in
-	// dangerousHeaders), then the BearerProvider re-injects the real
-	// token from services.auth config.
 	client, err := gogitlab.NewClient("",
 		gogitlab.WithBaseURL(gitlabURL),
 		gogitlab.WithHTTPClient(httpClient),
@@ -69,7 +144,6 @@ func discoverInstances(p *handler.Plugin) error {
 	}
 	defaultInstance = "default"
 
-	// Register domain for proxy allowlist.
 	if host := extractHost(gitlabURL); host != "" {
 		p.SetInitDomains([]string{host})
 	}
@@ -100,30 +174,6 @@ func resolveInstance(name string) (*gogitlab.Client, error) {
 		return nil, fmt.Errorf("unknown instance %q (available: %s)", name, strings.Join(names, ", "))
 	}
 	return inst.Client, nil
-}
-
-// detectMultiInstance scans the environment for GITLAB_{NAME}_TOKEN
-// patterns that indicate multi-instance configuration.
-func detectMultiInstance() []string {
-	var names []string
-	for _, env := range os.Environ() {
-		key, value, ok := strings.Cut(env, "=")
-		if !ok || value == "" {
-			continue
-		}
-		if !strings.HasPrefix(key, "GITLAB_") || !strings.HasSuffix(key, "_TOKEN") {
-			continue
-		}
-		if key == "GITLAB_TOKEN" || key == "GITLAB_SSL_VERIFY" {
-			continue
-		}
-
-		name := strings.ToLower(key[7 : len(key)-6])
-		if name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
 }
 
 // extractHost returns the hostname from a URL string.
