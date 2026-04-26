@@ -1738,10 +1738,6 @@ func TestTableDataStructures(t *testing.T) {
 	table := tableSegment{
 		rows:       []tableRow{row},
 		numColumns: 2,
-		isTable:    true,
-	}
-	if !table.isTable {
-		t.Error("expected isTable to be true")
 	}
 	if table.numColumns != 2 {
 		t.Errorf("expected 2 columns, got %d", table.numColumns)
@@ -3575,7 +3571,6 @@ func TestParseMarkdownTable(t *testing.T) {
 			},
 			want: &tableSegment{
 				numColumns: 2,
-				isTable:    true,
 				rows: []tableRow{
 					{cells: []tableCell{
 						{segments: []markdownSegment{{text: "A"}}},
@@ -3598,7 +3593,6 @@ func TestParseMarkdownTable(t *testing.T) {
 			},
 			want: &tableSegment{
 				numColumns: 3,
-				isTable:    true,
 				rows: []tableRow{
 					{cells: []tableCell{
 						{segments: []markdownSegment{{text: "Name"}}},
@@ -3667,9 +3661,6 @@ func TestParseMarkdownTable(t *testing.T) {
 
 			if got.numColumns != tt.want.numColumns {
 				t.Errorf("numColumns: got %d, want %d", got.numColumns, tt.want.numColumns)
-			}
-			if got.isTable != tt.want.isTable {
-				t.Errorf("isTable: got %v, want %v", got.isTable, tt.want.isTable)
 			}
 			if len(got.rows) != len(tt.want.rows) {
 				t.Errorf("rows: got %d, want %d", len(got.rows), len(tt.want.rows))
@@ -3956,7 +3947,6 @@ More text`,
 func TestConvertTableToRequests(t *testing.T) {
 	table := &tableSegment{
 		numColumns: 2,
-		isTable:    true,
 		rows: []tableRow{
 			{cells: []tableCell{
 				{segments: []markdownSegment{{text: "Header1"}}},

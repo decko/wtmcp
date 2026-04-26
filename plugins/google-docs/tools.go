@@ -661,7 +661,7 @@ type markdownSegment struct {
 	codeLanguage      string // language identifier for code block (e.g., ```language syntax)
 	// Table support
 	isTable bool
-	table   *tableSegment // Non-nil when isTable=true
+	table   *tableSegment
 }
 
 // tableCell represents a single cell in a markdown table.
@@ -678,7 +678,6 @@ type tableRow struct {
 type tableSegment struct {
 	rows       []tableRow
 	numColumns int
-	isTable    bool // Always true, used for type discrimination
 }
 
 // CodeAnnotations holds code detection results for a document.
@@ -1089,7 +1088,6 @@ func parseMarkdownTable(lines []string) *tableSegment {
 	return &tableSegment{
 		rows:       rows,
 		numColumns: numColumns,
-		isTable:    true,
 	}
 }
 
@@ -1386,11 +1384,11 @@ func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIn
 
 	// Check if there are any table segments
 	hasTable := false
-	var tableSegments []*tableSegment
+	tableCount := 0
 	for _, seg := range segments {
 		if seg.isTable && seg.table != nil {
 			hasTable = true
-			tableSegments = append(tableSegments, seg.table)
+			tableCount++
 		}
 	}
 
@@ -1557,7 +1555,7 @@ func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIn
 			"title":        doc.Title,
 			"status":       "success",
 			"insert_index": insertIndex,
-			"tables":       len(tableSegments),
+			"tables":       tableCount,
 		}, nil
 	}
 
