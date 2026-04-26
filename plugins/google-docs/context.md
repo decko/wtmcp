@@ -97,7 +97,7 @@ Write or append text to a Google Doc with optional markdown formatting. When mar
 - `append_to_end` (default: true): Append text to the end of the document
 - `insert_index` (default: 0): Character index for insertion (used if append_to_end is false)
 
-**Returns:** Document ID, title, status, insert index, character count
+**Returns:** Document ID, title, status, insert index, character count, replies, tables
 
 **Supported markdown formatting:**
 - Headings: `# H1`, `## H2`, `### H3`, `#### H4`, `##### H5`, `###### H6`
@@ -205,6 +205,8 @@ When using nested lists, the inner list format might not match the expected one 
 
 ### Tables
 
+**Note:** Tables are only supported via `gdocs_write_text` with `is_markdown: true`. The `gdocs_write_markdown` tool does not support tables.
+
 Standard markdown table syntax with pipe delimiters:
 
 ```markdown
@@ -240,7 +242,7 @@ All inline formatting works inside table cells:
 | Name | Status | Link |
 | ---- | ------ | ---- |
 | **Bold Name** | *Italic* | [Google](https://google.com) |
-| __Underlined__ | ~~Strike~~ | Regular text |
+| __Underlined__ | ~~Strike~~ | `inline code` |
 ```
 
 **Smart Chips in Cells:**
@@ -264,9 +266,20 @@ Empty cells are supported and will render as empty in the table:
 | Content |  | More |
 ```
 
+**Escaped Pipes:**
+
+Use `\|` to include a literal pipe character in cell content:
+
+```markdown
+| Command | Description |
+| --- | --- |
+| echo a \| b | Pipe in command |
+```
+
 **Limitations:**
+- Maximum table size: 50 rows and 20 columns
 - Column alignment syntax (`:---`, `:---:`, `---:`) is ignored
-- Pipe character (`|`) inside cell content is not supported
+- Pipe characters inside backtick code spans in cells (e.g., `` `a | b` ``) are treated as column delimiters; this is not supported
 - Merged cells and nested tables are not supported
 
 ### Smart Chips
@@ -427,7 +440,7 @@ italic = true
 | Date chips (`@today`) | ✅ Yes | Current date |
 | Date chips (`@date(YYYY-MM-DD)`) | ✅ Yes | Specific date |
 | Person chips (`@(email)`) | ✅ Yes | |
-| Tables | ✅ Yes | Standard markdown syntax with optional headers (headerless extension), rich text in cells, headers auto-bolded |
+| Tables | ✅ Yes | `gdocs_write_text` only; standard markdown syntax with optional headers, rich text in cells, max 50x20 |
 | Code blocks (` ``` `) | ✅ Yes | Converted to/from monospace font with syntax highlighting (10 languages supported) |
 | Inline code (`` ` ``) | ✅ Yes | Converted to/from monospace font (Courier New) |
 | Blockquotes | ❌ No | Not yet supported |
@@ -549,8 +562,9 @@ Files are saved with permissions `0600` (owner read/write only).
 
 This is an **initial implementation** of document creation and modification support. The markdown-to-Google Docs formatting conversion has the following limitations:
 
+- **Table size**: Maximum 50 rows and 20 columns per table
 - **Table column alignment**: Column alignment syntax (`:---`, `:---:`, `---:`) is ignored
-- **Pipe characters in cells**: Literal pipe character (`|`) in cell content is not supported (would require escaping)
+- **Pipe characters in cells**: Use `\|` to include literal pipe characters in cell content
 - **Advanced table features**: Merged cells and nested tables are not supported
 - **Blockquotes**: Blockquotes are not converted to Google Docs quote styling
 - **Images**: Inline images cannot be inserted via markdown

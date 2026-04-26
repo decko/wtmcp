@@ -102,7 +102,7 @@ tools:
       is_markdown:
         type: boolean
         default: true
-        description: "Parse text as markdown and apply rich formatting (headings, bold, italic, underline, links)"
+        description: "Parse text as markdown and apply rich formatting (headings, bold, italic, underline, strikethrough, links, lists, tables, code, smart chips)"
       append_to_end:
         type: boolean
         default: true
@@ -114,7 +114,7 @@ tools:
 
   - name: gdocs_write_markdown
     access: write
-    description: "Write Markdown-formatted text to a Google Doc with rich formatting (headings, bold, italic, links, etc.)"
+    description: "Write Markdown-formatted text to a Google Doc with rich formatting (headings, bold, italic, links, etc.). Does not support tables — use gdocs_write_text with is_markdown for tables."
     params:
       document_id_or_url:
         type: string

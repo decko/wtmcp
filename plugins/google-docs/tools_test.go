@@ -3944,6 +3944,235 @@ More text`,
 	}
 }
 
+func TestTableSizeLimits(t *testing.T) {
+	t.Run("table within limits is parsed", func(t *testing.T) {
+		var lines []string
+		lines = append(lines, "| A | B |")
+		lines = append(lines, "| --- | --- |")
+		for i := 0; i < 10; i++ {
+			lines = append(lines, "| x | y |")
+		}
+		table := parseMarkdownTable(lines)
+		if table == nil {
+			t.Fatal("expected table to be parsed")
+		}
+	})
+
+	t.Run("large table is still parsed by parser", func(t *testing.T) {
+		var lines []string
+		header := "|"
+		sep := "|"
+		row := "|"
+		for i := 0; i < maxTableColumns+5; i++ {
+			header += " H |"
+			sep += " --- |"
+			row += " D |"
+		}
+		lines = append(lines, header)
+		lines = append(lines, sep)
+		for i := 0; i < 5; i++ {
+			lines = append(lines, row)
+		}
+		table := parseMarkdownTable(lines)
+		if table == nil {
+			t.Fatal("parser should parse large tables (limits enforced at tool level)")
+		}
+		if table.numColumns != maxTableColumns+5 {
+			t.Errorf("expected %d columns, got %d", maxTableColumns+5, table.numColumns)
+		}
+	})
+
+	t.Run("constants are reasonable", func(t *testing.T) {
+		if maxTableRows < 10 || maxTableRows > 100 {
+			t.Errorf("maxTableRows=%d seems unreasonable", maxTableRows)
+		}
+		if maxTableColumns < 5 || maxTableColumns > 50 {
+			t.Errorf("maxTableColumns=%d seems unreasonable", maxTableColumns)
+		}
+	})
+}
+
+func TestInlineCodeInTableCells(t *testing.T) {
+	t.Run("inline code cell produces Courier New", func(t *testing.T) {
+		cell := tableCell{
+			segments: []markdownSegment{
+				{text: "code", isInlineCode: true},
+			},
+		}
+		requests := populateTableCell(&cell, 5)
+
+		foundCourier := false
+		for _, req := range requests {
+			if req.UpdateTextStyle != nil &&
+				req.UpdateTextStyle.TextStyle.WeightedFontFamily != nil &&
+				req.UpdateTextStyle.TextStyle.WeightedFontFamily.FontFamily == "Courier New" {
+				foundCourier = true
+			}
+		}
+		if !foundCourier {
+			t.Error("expected Courier New for inline code in cell")
+		}
+	})
+
+	t.Run("bold inline code in cell", func(t *testing.T) {
+		cell := tableCell{
+			segments: []markdownSegment{
+				{text: "code", isInlineCode: true, bold: true},
+			},
+		}
+		requests := populateTableCell(&cell, 5)
+
+		for _, req := range requests {
+			if req.UpdateTextStyle != nil &&
+				req.UpdateTextStyle.TextStyle.WeightedFontFamily != nil &&
+				req.UpdateTextStyle.TextStyle.WeightedFontFamily.FontFamily == "Courier New" {
+				if !req.UpdateTextStyle.TextStyle.Bold {
+					t.Error("expected bold + Courier New")
+				}
+				if !strings.Contains(req.UpdateTextStyle.Fields, "weightedFontFamily") {
+					t.Error("fields should include weightedFontFamily")
+				}
+				if !strings.Contains(req.UpdateTextStyle.Fields, "bold") {
+					t.Error("fields should include bold")
+				}
+			}
+		}
+	})
+
+	t.Run("parsed table with inline code", func(t *testing.T) {
+		lines := []string{
+			"| Code |",
+			"| ---- |",
+			"| `hello` |",
+		}
+		table := parseMarkdownTable(lines)
+		if table == nil {
+			t.Fatal("expected table")
+		}
+		cell := table.rows[1].cells[0]
+		foundInlineCode := false
+		for _, seg := range cell.segments {
+			if seg.isInlineCode {
+				foundInlineCode = true
+			}
+		}
+		if !foundInlineCode {
+			t.Error("expected inline code segment in cell")
+		}
+	})
+}
+
+func TestPipeEscaping(t *testing.T) {
+	t.Run("escaped pipe in cell", func(t *testing.T) {
+		lines := []string{
+			`| Command | Output |`,
+			`| --- | --- |`,
+			`| echo a \| b | result |`,
+		}
+		table := parseMarkdownTable(lines)
+		if table == nil {
+			t.Fatal("expected table")
+		}
+		if table.numColumns != 2 {
+			t.Errorf("expected 2 columns, got %d", table.numColumns)
+		}
+		cell := table.rows[1].cells[0]
+		if len(cell.segments) == 0 || cell.segments[0].text != `echo a | b` {
+			t.Errorf("expected 'echo a | b', got %q", cell.segments[0].text)
+		}
+	})
+
+	t.Run("escaped backslash before pipe is delimiter", func(t *testing.T) {
+		lines := []string{
+			`| A | B |`,
+			`| --- | --- |`,
+			`| path\\ | value |`,
+		}
+		table := parseMarkdownTable(lines)
+		if table == nil {
+			t.Fatal("expected table")
+		}
+		if table.numColumns != 2 {
+			t.Errorf("expected 2 columns, got %d", table.numColumns)
+		}
+		cell := table.rows[1].cells[0]
+		if len(cell.segments) == 0 || cell.segments[0].text != `path\` {
+			t.Errorf(`expected "path\", got %q`, cell.segments[0].text)
+		}
+	})
+
+	t.Run("escaped backslash then escaped pipe", func(t *testing.T) {
+		lines := []string{
+			`| A |`,
+			`| --- |`,
+			`| C:\\\| |`,
+		}
+		table := parseMarkdownTable(lines)
+		if table == nil {
+			t.Fatal("expected table")
+		}
+		cell := table.rows[1].cells[0]
+		if len(cell.segments) == 0 || cell.segments[0].text != `C:\|` {
+			t.Errorf(`expected "C:\|", got %q`, cell.segments[0].text)
+		}
+	})
+
+	t.Run("multiple escaped pipes", func(t *testing.T) {
+		lines := []string{
+			`| Expr |`,
+			`| --- |`,
+			`| a \| b \| c |`,
+		}
+		table := parseMarkdownTable(lines)
+		if table == nil {
+			t.Fatal("expected table")
+		}
+		cell := table.rows[1].cells[0]
+		if len(cell.segments) == 0 || cell.segments[0].text != `a | b | c` {
+			t.Errorf(`expected "a | b | c", got %q`, cell.segments[0].text)
+		}
+	})
+
+	t.Run("escaped pipe with formatting", func(t *testing.T) {
+		lines := []string{
+			`| Text |`,
+			`| --- |`,
+			`| **bold \| text** |`,
+		}
+		table := parseMarkdownTable(lines)
+		if table == nil {
+			t.Fatal("expected table")
+		}
+		cell := table.rows[1].cells[0]
+		foundBold := false
+		for _, seg := range cell.segments {
+			if seg.bold && strings.Contains(seg.text, "|") {
+				foundBold = true
+			}
+		}
+		if !foundBold {
+			t.Error("expected bold segment containing pipe character")
+		}
+	})
+
+	t.Run("parseMarkdown with escaped pipes", func(t *testing.T) {
+		markdown := "| A |\n| --- |\n| x \\| y |"
+		segments := parseMarkdown(markdown)
+		foundTable := false
+		for _, seg := range segments {
+			if seg.isTable {
+				foundTable = true
+				if seg.table.numColumns != 1 {
+					t.Errorf("expected 1 column, got %d", seg.table.numColumns)
+				}
+			}
+		}
+		if !foundTable {
+			t.Error("expected table segment")
+		}
+	})
+}
+
 func TestConvertTableToRequests(t *testing.T) {
 	table := &tableSegment{
 		numColumns: 2,

@@ -63,6 +63,14 @@ func getHighlightConfig(language string) (*highlighter.Config, error) {
 	return cfg, nil
 }
 
+const (
+	maxTableRows    = 50
+	maxTableColumns = 20
+
+	tablePipePlaceholder      = "\ue000" // U+E000 Private Use Area
+	tableBackslashPlaceholder = "\ue001" // U+E001 Private Use Area
+)
+
 // extractDocumentID extracts a Google Docs document ID from a URL.
 func extractDocumentID(input string) string {
 	if m := reDocURL.FindStringSubmatch(input); len(m) > 1 {
@@ -887,7 +895,7 @@ func parseMarkdown(markdown string) []markdownSegment {
 		}
 
 		// Check if this line looks like a table row
-		isTableRow := reTableRow.MatchString(line)
+		isTableRow := reTableRow.MatchString(escapeTablePipes(line))
 
 		if isTableRow {
 			// Start or continue buffering table lines
@@ -1093,21 +1101,32 @@ func parseMarkdownTable(lines []string) *tableSegment {
 
 // splitTableRow splits a table row by pipe delimiters.
 // Returns cell contents without the leading/trailing pipes.
-func splitTableRow(line string) []string {
-	// Remove leading/trailing whitespace
-	line = strings.TrimSpace(line)
+// escapeTablePipes replaces \\ then \| with placeholders so that
+// pipe splitting and regex matching see the correct column structure.
+func escapeTablePipes(line string) string {
+	line = strings.ReplaceAll(line, `\\`, tableBackslashPlaceholder)
+	line = strings.ReplaceAll(line, `\|`, tablePipePlaceholder)
+	return line
+}
 
-	// Remove leading and trailing pipes
+// restoreTableEscapes restores placeholders back to their literal characters.
+func restoreTableEscapes(s string) string {
+	s = strings.ReplaceAll(s, tablePipePlaceholder, "|")
+	s = strings.ReplaceAll(s, tableBackslashPlaceholder, `\`)
+	return s
+}
+
+func splitTableRow(line string) []string {
+	line = escapeTablePipes(line)
+	line = strings.TrimSpace(line)
 	line = strings.TrimPrefix(line, "|")
 	line = strings.TrimSuffix(line, "|")
 
-	// Split by pipe
 	parts := strings.Split(line, "|")
 
-	// Trim whitespace from each part
 	cells := make([]string, 0, len(parts))
 	for _, part := range parts {
-		cells = append(cells, strings.TrimSpace(part))
+		cells = append(cells, restoreTableEscapes(strings.TrimSpace(part)))
 	}
 
 	return cells
@@ -1354,7 +1373,6 @@ func mergeSegments(segments []markdownSegment) []markdownSegment {
 	return merged
 }
 
-// convertTableToRequests converts a table segment to Google Docs API requests.
 // convertTableToRequests creates just the empty table structure.
 // Cell content must be populated in a separate batch after querying the document.
 func convertTableToRequests(table *tableSegment, startIndex int64) []*docs.Request {
@@ -1389,24 +1407,58 @@ func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIn
 		if seg.isTable && seg.table != nil {
 			hasTable = true
 			tableCount++
+			if len(seg.table.rows) > maxTableRows || seg.table.numColumns > maxTableColumns {
+				return nil, fmt.Errorf("table exceeds maximum dimensions (%d rows, %d columns); received %dx%d",
+					maxTableRows, maxTableColumns, len(seg.table.rows), seg.table.numColumns)
+			}
 		}
 	}
 
 	if hasTable {
-		// Process each table completely (create + populate) before moving to next table
-		// This avoids index confusion when multiple tables are present
 		currentIndex := insertIndex
 		tableIdx := 0
+		totalReplies := 0
+		var pendingSegments []markdownSegment
+
+		flushPending := func() error {
+			if len(pendingSegments) == 0 {
+				return nil
+			}
+			segRequests := convertMarkdownToRequests(pendingSegments, currentIndex)
+			if len(segRequests) > 0 {
+				batchUpdateReq := &docs.BatchUpdateDocumentRequest{Requests: segRequests}
+				resp, err := docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
+				if err != nil {
+					return fmt.Errorf("insert content: %w", err)
+				}
+				totalReplies += len(resp.Replies)
+				doc, err = docsSvc.Documents.Get(docID).Do()
+				if err != nil {
+					return fmt.Errorf("get document after content insert: %w", err)
+				}
+				if doc.Body == nil || len(doc.Body.Content) == 0 {
+					return fmt.Errorf("document body is empty after content insert")
+				}
+				currentIndex = doc.Body.Content[len(doc.Body.Content)-1].EndIndex - 1
+			}
+			pendingSegments = nil
+			return nil
+		}
 
 		for _, seg := range segments {
 			if seg.isTable && seg.table != nil {
+				if err := flushPending(); err != nil {
+					return nil, err
+				}
+
 				// Create this table structure
 				tableRequests := convertTableToRequests(seg.table, currentIndex)
 				batchUpdateReq := &docs.BatchUpdateDocumentRequest{Requests: tableRequests}
-				_, err := docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
+				resp, err := docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
 				if err != nil {
 					return nil, fmt.Errorf("create table %d: %w", tableIdx, err)
 				}
+				totalReplies += len(resp.Replies)
 
 				// Query document to get the table we just created
 				doc, err = docsSvc.Documents.Get(docID).Do()
@@ -1464,10 +1516,11 @@ func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIn
 						// Execute this cell's requests
 						if len(cellReqs) > 0 {
 							batchUpdateReq := &docs.BatchUpdateDocumentRequest{Requests: cellReqs}
-							_, err = docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
+							cellResp, err := docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
 							if err != nil {
 								return nil, fmt.Errorf("populate table %d cell[%d,%d]: %w", tableIdx, rowIdx, colIdx, err)
 							}
+							totalReplies += len(cellResp.Replies)
 
 							// Re-query to get updated table structure for next cell.
 							// Skip if this is the last cell to save one API call.
@@ -1524,30 +1577,12 @@ func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIn
 
 				tableIdx++
 			} else {
-				// Handle non-table segments
-				segRequests := convertMarkdownToRequests([]markdownSegment{seg}, currentIndex)
-				if len(segRequests) > 0 {
-					batchUpdateReq := &docs.BatchUpdateDocumentRequest{Requests: segRequests}
-					_, err := docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
-					if err != nil {
-						return nil, fmt.Errorf("insert content: %w", err)
-					}
-
-					// Update currentIndex - track all content insertions
-					for _, req := range segRequests {
-						switch {
-						case req.InsertText != nil:
-							currentIndex += int64(utf8.RuneCountInString(req.InsertText.Text))
-						case req.InsertDate != nil:
-							// Date chips take 1 character in the index
-							currentIndex++
-						case req.InsertPerson != nil:
-							// Person chips take 1 character in the index
-							currentIndex++
-						}
-					}
-				}
+				pendingSegments = append(pendingSegments, seg)
 			}
+		}
+
+		if err := flushPending(); err != nil {
+			return nil, err
 		}
 
 		return map[string]any{
@@ -1555,6 +1590,7 @@ func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIn
 			"title":        doc.Title,
 			"status":       "success",
 			"insert_index": insertIndex,
+			"replies":      totalReplies,
 			"tables":       tableCount,
 		}, nil
 	}
@@ -1562,7 +1598,7 @@ func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIn
 	// No tables - use single-batch insertion via convertMarkdownToRequests
 	requests := convertMarkdownToRequests(segments, insertIndex)
 	batchUpdateReq := &docs.BatchUpdateDocumentRequest{Requests: requests}
-	_, err = docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
+	resp, err := docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
 	if err != nil {
 		return nil, fmt.Errorf("batch update: %w", err)
 	}
@@ -1572,6 +1608,8 @@ func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIn
 		"title":        doc.Title,
 		"status":       "success",
 		"insert_index": insertIndex,
+		"replies":      len(resp.Replies),
+		"tables":       0,
 	}, nil
 }
 
@@ -1716,7 +1754,7 @@ func populateTableCell(cell *tableCell, cellStartIndex int64) []*docs.Request {
 		segEndIndex := currentIndex + segLength
 
 		// Apply text formatting if needed
-		if seg.bold || seg.italic || seg.underline || seg.strikethrough || seg.linkURL != "" {
+		if seg.bold || seg.italic || seg.underline || seg.strikethrough || seg.linkURL != "" || seg.isInlineCode {
 			textStyle := &docs.TextStyle{
 				Bold:          seg.bold,
 				Italic:        seg.italic,
@@ -1728,10 +1766,19 @@ func populateTableCell(cell *tableCell, cellStartIndex int64) []*docs.Request {
 				textStyle.Link = &docs.Link{Url: seg.linkURL}
 			}
 
+			if seg.isInlineCode {
+				textStyle.WeightedFontFamily = &docs.WeightedFontFamily{
+					FontFamily: "Courier New",
+				}
+			}
+
 			// Build fields list
 			fields := []string{"bold", "italic", "underline", "strikethrough"}
 			if seg.linkURL != "" {
 				fields = append(fields, "link")
+			}
+			if seg.isInlineCode {
+				fields = append(fields, "weightedFontFamily")
 			}
 
 			requests = append(requests, &docs.Request{
@@ -2454,6 +2501,7 @@ func toolWriteText(params, _ json.RawMessage) (any, error) {
 		"insert_index": insertIndex,
 		"characters":   len(p.Text),
 		"replies":      len(resp.Replies),
+		"tables":       0,
 	}, nil
 }
 
@@ -2511,8 +2559,15 @@ func toolWriteMarkdown(params, _ json.RawMessage) (any, error) {
 		markdownToInsert = "\n" + markdownToInsert
 	}
 
-	// Parse markdown and use the shared helper for handling tables
+	// Parse markdown and reject tables
 	segments := parseMarkdown(markdownToInsert)
+
+	for _, seg := range segments {
+		if seg.isTable && seg.table != nil {
+			return nil, fmt.Errorf("tables are not supported in gdocs_write_markdown; use gdocs_write_text with is_markdown: true")
+		}
+	}
+
 	result, err := insertMarkdownWithTables(docID, segments, insertIndex)
 	if err != nil {
 		return nil, err
