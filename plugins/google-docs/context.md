@@ -355,7 +355,7 @@ def example():
 ```
 ````
 
-Creates separate paragraph with Courier New font. Language identifiers (e.g., ` ```python `) are parsed and stored for future syntax highlighting support.
+Code blocks with language identifiers are rendered with syntax highlighting (per-token colors, bold, italic). Code blocks without a language identifier use basic Courier New monospace formatting.
 
 **Detection (Reading from Google Docs):**
 - Text formatted with monospace fonts (Courier New, Courier, Consolas, Monaco, Menlo, Source Code Pro, SF Mono, Inconsolata, Roboto Mono) is detected as code
@@ -381,7 +381,7 @@ def hello(name):
 ````
 
 **Result:** Code rendered with:
-- Keywords (def, return) in purple-red + bold
+- Keywords (def, return) in red + bold
 - Strings in dark blue
 - Comments in gray + italic
 - Functions in purple + bold
@@ -398,17 +398,21 @@ mkdir -p ~/.config/wtmcp/assets/google-docs/highlights/
 Example `python.toml`:
 ```toml
 language = "python"
+description = "Custom Python highlighting"
 
 [styles.keyword]
 color = "#FF0000"  # Red keywords
 bold = true
+italic = false
 
 [styles.string]
 color = "#00FF00"  # Green strings
 bold = false
+italic = false
 
 [styles.comment]
 color = "#808080"  # Gray comments
+bold = false
 italic = true
 ```
 
@@ -422,6 +426,8 @@ italic = true
 - `type` - Type names and built-in types
 - `variable` - Variable names
 - `constant` - Constants
+- `builtin` - Built-in functions and names (print, len, range, etc.)
+- `decorator` - Decorators (@property, @staticmethod, etc.)
 - `default` - Fallback for unrecognized tokens
 
 **Color Format:** Hex RGB (e.g., `"#D73A49"`)
@@ -430,7 +436,7 @@ italic = true
 
 - **Code block not highlighted:** Check language identifier is spelled correctly
 - **Colors not applying:** Verify TOML syntax is valid
-- **Language not supported:** Check if chroma library supports the language
+- **Language not supported:** Check if the language is in the supported languages list above
 - **Fallback to monospace:** Invalid config falls back gracefully, check logs
 
 **Notes:**
