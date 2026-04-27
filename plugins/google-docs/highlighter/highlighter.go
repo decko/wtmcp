@@ -131,6 +131,20 @@ func mapTokenToStyle(tokenType chroma.TokenType, config *Config) Style {
 		if style, ok := config.Styles["constant"]; ok {
 			return style
 		}
+	case isTokenType(tokenType, chroma.NameBuiltin):
+		if style, ok := config.Styles["builtin"]; ok {
+			return style
+		}
+		if style, ok := config.Styles["function"]; ok {
+			return style
+		}
+	case isTokenType(tokenType, chroma.NameDecorator):
+		if style, ok := config.Styles["decorator"]; ok {
+			return style
+		}
+		if style, ok := config.Styles["keyword"]; ok {
+			return style
+		}
 	case isTokenType(tokenType, chroma.Name):
 		if style, ok := config.Styles["variable"]; ok {
 			return style

@@ -50,3 +50,13 @@ italic = false
 color = "#24292E"
 bold = false
 italic = false
+
+[styles.builtin]
+color = "#6F42C1"
+bold = true
+italic = false
+
+[styles.decorator]
+color = "#D73A49"
+bold = true
+italic = false

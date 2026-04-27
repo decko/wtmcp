@@ -111,7 +111,7 @@ func TestLoadConfig(t *testing.T) {
 				t.Errorf("LoadConfig() language = %v, want %v", cfg.Language, tt.language)
 			}
 			// Verify essential styles exist
-			requiredStyles := []string{"keyword", "string", "comment", "default"}
+			requiredStyles := []string{"keyword", "string", "comment", "default", "builtin", "decorator"}
 			for _, style := range requiredStyles {
 				if _, ok := cfg.Styles[style]; !ok {
 					t.Errorf("LoadConfig() missing required style: %s", style)
