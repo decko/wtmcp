@@ -1393,12 +1393,8 @@ func convertTableToRequests(table *tableSegment, startIndex int64) []*docs.Reque
 // 2. Query document to get cell indices
 // 3. Populate all cells in a single batch
 // Returns a result map with document info and status.
-func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIndex int64) (map[string]any, error) {
-	// Get the document to retrieve title
-	doc, err := docsSvc.Documents.Get(docID).Do()
-	if err != nil {
-		return nil, fmt.Errorf("get document: %w", err)
-	}
+func insertMarkdownWithTables(docID string, title string, segments []markdownSegment, insertIndex int64) (map[string]any, error) {
+	var doc *docs.Document
 
 	// Check if there are any table segments
 	hasTable := false
@@ -1587,7 +1583,7 @@ func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIn
 
 		return map[string]any{
 			"document_id":  docID,
-			"title":        doc.Title,
+			"title":        title,
 			"status":       "success",
 			"insert_index": insertIndex,
 			"replies":      totalReplies,
@@ -1605,7 +1601,7 @@ func insertMarkdownWithTables(docID string, segments []markdownSegment, insertIn
 
 	return map[string]any{
 		"document_id":  docID,
-		"title":        doc.Title,
+		"title":        title,
 		"status":       "success",
 		"insert_index": insertIndex,
 		"replies":      len(resp.Replies),
@@ -2461,7 +2457,7 @@ func toolWriteText(params, _ json.RawMessage) (any, error) {
 		segments := parseMarkdown(textToInsert)
 
 		// Use the shared helper for handling markdown with potential tables
-		result, err := insertMarkdownWithTables(docID, segments, insertIndex)
+		result, err := insertMarkdownWithTables(docID, doc.Title, segments, insertIndex)
 		if err != nil {
 			return nil, err
 		}
@@ -2565,7 +2561,7 @@ func toolWriteMarkdown(params, _ json.RawMessage) (any, error) {
 		}
 	}
 
-	result, err := insertMarkdownWithTables(docID, segments, insertIndex)
+	result, err := insertMarkdownWithTables(docID, doc.Title, segments, insertIndex)
 	if err != nil {
 		return nil, err
 	}
