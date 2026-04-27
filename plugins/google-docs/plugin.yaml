@@ -126,7 +126,7 @@ tools:
         description: "Markdown content to write"
       append_to_end:
         type: boolean
-        default: false
+        default: true
         description: "Append text to the end of the document"
       insert_index:
         type: integer

@@ -2506,7 +2506,7 @@ type writeMarkdownParams struct {
 }
 
 func toolWriteMarkdown(params, _ json.RawMessage) (any, error) {
-	var p writeMarkdownParams
+	p := writeMarkdownParams{AppendToEnd: true}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("parse params: %w", err)
 	}
