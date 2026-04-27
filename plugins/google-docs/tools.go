@@ -1834,12 +1834,9 @@ func convertMarkdownToRequests(segments []markdownSegment, startIndex int64) []*
 	var currentHeadingLineID int
 
 	for i, seg := range segments {
-		// Table segments should never reach this function - they're handled by insertMarkdownWithTables.
-		// If we encounter one, it's a programming error.
 		if seg.isTable && seg.table != nil {
-			// This should never happen - insertMarkdownWithTables handles all table processing.
-			// If we get here, it means the caller didn't properly filter table segments.
-			panic("convertMarkdownToRequests called with table segment - tables must be handled by insertMarkdownWithTables")
+			fmt.Fprintf(os.Stderr, "WARNING: convertMarkdownToRequests called with table segment (skipping) — tables must be handled by insertMarkdownWithTables\n")
+			continue
 		}
 
 		if seg.text == "" && !seg.isDateField && !seg.isPersonField {
