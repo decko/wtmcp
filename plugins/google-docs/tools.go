@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -70,6 +69,29 @@ const (
 	tablePipePlaceholder      = "\ue000" // U+E000 Private Use Area
 	tableBackslashPlaceholder = "\ue001" // U+E001 Private Use Area
 )
+
+// monospaceStyleRequest creates an UpdateTextStyle request for basic
+// Courier New monospace formatting, clearing all text decorations.
+func monospaceStyleRequest(startIndex, endIndex int64) *docs.Request {
+	return &docs.Request{
+		UpdateTextStyle: &docs.UpdateTextStyleRequest{
+			Range: &docs.Range{
+				StartIndex: startIndex,
+				EndIndex:   endIndex,
+			},
+			TextStyle: &docs.TextStyle{
+				WeightedFontFamily: &docs.WeightedFontFamily{
+					FontFamily: "Courier New",
+				},
+				Bold:          false,
+				Italic:        false,
+				Underline:     false,
+				Strikethrough: false,
+			},
+			Fields: "weightedFontFamily,bold,italic,underline,strikethrough",
+		},
+	}
+}
 
 // extractDocumentID extracts a Google Docs document ID from a URL.
 func extractDocumentID(input string) string {
@@ -1920,77 +1942,27 @@ func convertMarkdownToRequests(segments []markdownSegment, startIndex int64) []*
 												RgbColor: hseg.Color,
 											},
 										},
-										Bold:      hseg.Bold,
-										Italic:    hseg.Italic,
-										Underline: false,
+										Bold:          hseg.Bold,
+										Italic:        hseg.Italic,
+										Underline:     false,
+										Strikethrough: false,
 									},
-									Fields: "weightedFontFamily,foregroundColor,bold,italic,underline",
+									Fields: "weightedFontFamily,foregroundColor,bold,italic,underline,strikethrough",
 								},
 							})
 
 							segIndex += segLen
 						}
 					} else {
-						// Highlighting failed, fall back to basic Courier New
-						log.Printf("INFO: Highlighting failed for %s: %v, using basic monospace", seg.codeLanguage, err)
-						requests = append(requests, &docs.Request{
-							UpdateTextStyle: &docs.UpdateTextStyleRequest{
-								Range: &docs.Range{
-									StartIndex: currentIndex,
-									EndIndex:   endIndex,
-								},
-								TextStyle: &docs.TextStyle{
-									WeightedFontFamily: &docs.WeightedFontFamily{
-										FontFamily: "Courier New",
-									},
-									Bold:      false,
-									Italic:    false,
-									Underline: false,
-								},
-								Fields: "weightedFontFamily,bold,italic,underline",
-							},
-						})
+						fmt.Fprintf(os.Stderr, "INFO: highlighting failed for %s: %v, using basic monospace\n", seg.codeLanguage, err)
+						requests = append(requests, monospaceStyleRequest(currentIndex, endIndex))
 					}
 				} else {
-					// No config available, fall back to basic Courier New
-					log.Printf("INFO: No highlighting config for %s: %v, using basic monospace", seg.codeLanguage, err)
-					requests = append(requests, &docs.Request{
-						UpdateTextStyle: &docs.UpdateTextStyleRequest{
-							Range: &docs.Range{
-								StartIndex: currentIndex,
-								EndIndex:   endIndex,
-							},
-							TextStyle: &docs.TextStyle{
-								WeightedFontFamily: &docs.WeightedFontFamily{
-									FontFamily: "Courier New",
-								},
-								Bold:      false,
-								Italic:    false,
-								Underline: false,
-							},
-							Fields: "weightedFontFamily,bold,italic,underline",
-						},
-					})
+					fmt.Fprintf(os.Stderr, "INFO: no highlighting config for %s: %v, using basic monospace\n", seg.codeLanguage, err)
+					requests = append(requests, monospaceStyleRequest(currentIndex, endIndex))
 				}
 			} else {
-				// No language specified, use basic Courier New
-				requests = append(requests, &docs.Request{
-					UpdateTextStyle: &docs.UpdateTextStyleRequest{
-						Range: &docs.Range{
-							StartIndex: currentIndex,
-							EndIndex:   endIndex,
-						},
-						TextStyle: &docs.TextStyle{
-							WeightedFontFamily: &docs.WeightedFontFamily{
-								FontFamily: "Courier New",
-							},
-							Bold:      false,
-							Italic:    false,
-							Underline: false,
-						},
-						Fields: "weightedFontFamily,bold,italic,underline",
-					},
-				})
+				requests = append(requests, monospaceStyleRequest(currentIndex, endIndex))
 			}
 
 			currentIndex = endIndex
