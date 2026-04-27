@@ -1,6 +1,7 @@
 package highlighter
 
 import (
+	"strings"
 	"testing"
 
 	"google.golang.org/api/docs/v1"
@@ -154,6 +155,27 @@ func TestMergeSegments(t *testing.T) {
 				t.Errorf("MergeSegments() text = %q, want %q", text, tt.wantText)
 			}
 		})
+	}
+}
+
+func TestHighlightCodeSizeLimit(t *testing.T) {
+	cfg, err := LoadConfig("python")
+	if err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+
+	// Exactly at the limit should succeed
+	atLimit := strings.Repeat("x", maxHighlightSize)
+	_, err = HighlightCode(atLimit, "python", cfg)
+	if err != nil {
+		t.Errorf("HighlightCode() at limit (%d bytes) should succeed, got: %v", len(atLimit), err)
+	}
+
+	// One byte over should fail
+	overLimit := strings.Repeat("x", maxHighlightSize+1)
+	_, err = HighlightCode(overLimit, "python", cfg)
+	if err == nil {
+		t.Errorf("HighlightCode() over limit (%d bytes) should fail", len(overLimit))
 	}
 }
 

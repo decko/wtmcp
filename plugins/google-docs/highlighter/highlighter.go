@@ -16,8 +16,14 @@ type FormattedSegment struct {
 	Italic bool
 }
 
+const maxHighlightSize = 100 * 1024 // 100KB
+
 // HighlightCode applies syntax highlighting to code text using the specified language config.
 func HighlightCode(code, language string, config *Config) ([]FormattedSegment, error) {
+	if len(code) > maxHighlightSize {
+		return nil, fmt.Errorf("code block exceeds maximum size for highlighting (%d bytes, limit %d)", len(code), maxHighlightSize)
+	}
+
 	// Get chroma lexer for the language
 	lexer := lexers.Get(language)
 	if lexer == nil {
