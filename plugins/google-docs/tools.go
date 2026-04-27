@@ -297,21 +297,25 @@ func extractElementMarkdown(sb *strings.Builder, elem *docs.StructuralElement, a
 	if elem.Table != nil {
 		table := elem.Table
 
-		// Convert table to Markdown table
 		for rowIdx, row := range table.TableRows {
 			sb.WriteString("|")
 			for _, cell := range row.TableCells {
-				var cellText strings.Builder
+				var cellMD strings.Builder
 				for _, cellElem := range cell.Content {
-					extractElementText(&cellText, cellElem)
+					if cellElem.Table != nil {
+						extractElementText(&cellMD, cellElem)
+					} else {
+						extractElementMarkdown(&cellMD, cellElem, annotations, paraIndex)
+					}
 				}
+				cellContent := strings.TrimRight(cellMD.String(), "\n")
+				cellContent = strings.ReplaceAll(cellContent, "\n", " ")
 				sb.WriteString(" ")
-				sb.WriteString(strings.TrimSpace(cellText.String()))
+				sb.WriteString(strings.TrimSpace(cellContent))
 				sb.WriteString(" |")
 			}
 			sb.WriteString("\n")
 
-			// Add header separator after first row
 			if rowIdx == 0 {
 				sb.WriteString("|")
 				for range row.TableCells {

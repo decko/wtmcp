@@ -4387,6 +4387,73 @@ Paragraph`
 	})
 }
 
+func TestTableCellFormattingExtraction(t *testing.T) {
+	doc := &docs.Document{
+		Body: &docs.Body{
+			Content: []*docs.StructuralElement{
+				{
+					Table: &docs.Table{
+						TableRows: []*docs.TableRow{
+							{
+								TableCells: []*docs.TableCell{
+									{
+										Content: []*docs.StructuralElement{
+											{
+												Paragraph: &docs.Paragraph{
+													Elements: []*docs.ParagraphElement{
+														{
+															TextRun: &docs.TextRun{
+																Content:   "Header\n",
+																TextStyle: &docs.TextStyle{},
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+							{
+								TableCells: []*docs.TableCell{
+									{
+										Content: []*docs.StructuralElement{
+											{
+												Paragraph: &docs.Paragraph{
+													Elements: []*docs.ParagraphElement{
+														{
+															TextRun: &docs.TextRun{
+																Content:   "bold text\n",
+																TextStyle: &docs.TextStyle{Bold: true},
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	md := extractMarkdown(doc)
+
+	if !strings.Contains(md, "**bold text**") {
+		t.Errorf("expected bold formatting in table cell, got: %s", md)
+	}
+	if !strings.Contains(md, "| Header |") {
+		t.Errorf("expected header row, got: %s", md)
+	}
+	if !strings.Contains(md, "| --- |") {
+		t.Errorf("expected separator row, got: %s", md)
+	}
+}
+
 func TestRoundTrip_CodeBlock(t *testing.T) {
 	// Start with markdown
 	originalMarkdown := "Some intro text.\n\n```python\ndef hello():\n    return \"world\"\n```\n\nSome closing text.\n"
