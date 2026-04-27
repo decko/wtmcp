@@ -22,13 +22,35 @@ type Style struct {
 	Italic bool   `toml:"italic"`
 }
 
+const maxLanguageNameLen = 64
+
+// isValidLanguageName checks that a language name contains only safe characters.
+// Allows alphanumeric, hyphen, underscore, plus, and hash (for languages like c++ and c#).
+// Rejects dots and slashes to prevent path traversal.
+func isValidLanguageName(name string) bool {
+	if name == "" || len(name) > maxLanguageNameLen {
+		return false
+	}
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '+' || r == '#') {
+			return false
+		}
+	}
+	return true
+}
+
 // LoadConfig loads the highlighting configuration for a language.
 // Checks user override first (~/.config/wtmcp/assets/google-docs/highlights/),
 // then falls back to embedded default.
 func LoadConfig(language string) (*Config, error) {
+	if !isValidLanguageName(language) {
+		return nil, fmt.Errorf("invalid language name: %q", language)
+	}
+
 	// Try user override first
 	userConfigPath := getUserConfigPath(language)
-	//nolint:gosec // Path is constructed from user home dir and fixed structure, safe to use
+	//nolint:gosec // language is validated by isValidLanguageName above (no dots, slashes, or traversal)
 	if data, err := os.ReadFile(userConfigPath); err == nil {
 		var cfg Config
 		if err := toml.Unmarshal(data, &cfg); err != nil {
