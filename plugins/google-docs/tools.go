@@ -305,6 +305,10 @@ func extractElementMarkdown(sb *strings.Builder, elem *docs.StructuralElement, a
 					if cellElem.Table != nil {
 						extractElementText(&cellMD, cellElem)
 					} else {
+						// NOTE: paraIndex here is the parent table's index, not the
+						// cell paragraph's. Code annotations (inline code, code blocks)
+						// won't be detected for paragraphs inside table cells since
+						// detectCode only indexes top-level paragraphs.
 						extractElementMarkdown(&cellMD, cellElem, annotations, paraIndex)
 					}
 				}
@@ -1441,6 +1445,9 @@ func insertMarkdownWithTables(docID string, title string, segments []markdownSeg
 				if doc.Body == nil || len(doc.Body.Content) == 0 {
 					return fmt.Errorf("document body is empty after content insert")
 				}
+				// NOTE: this assumes content was appended at the document end.
+				// Mid-document insertion (append_to_end=false) would need to
+				// track the actual insertion point rather than using the last element.
 				currentIndex = doc.Body.Content[len(doc.Body.Content)-1].EndIndex - 1
 			}
 			pendingSegments = nil

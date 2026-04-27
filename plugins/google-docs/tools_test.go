@@ -4582,6 +4582,31 @@ func TestTableCellFormattingExtraction(t *testing.T) {
 	}
 }
 
+func TestWriteMarkdownTableRejection(t *testing.T) {
+	markdown := "# Title\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n"
+	segments := parseMarkdown(markdown)
+
+	foundTable := false
+	for _, seg := range segments {
+		if seg.isTable && seg.table != nil {
+			foundTable = true
+			break
+		}
+	}
+	if !foundTable {
+		t.Fatal("parseMarkdown should produce table segments for table input")
+	}
+
+	noTableMarkdown := "# Title\n\nSome text with **bold** and *italic*.\n"
+	noTableSegments := parseMarkdown(noTableMarkdown)
+
+	for _, seg := range noTableSegments {
+		if seg.isTable && seg.table != nil {
+			t.Error("non-table markdown should not produce table segments")
+		}
+	}
+}
+
 func TestTableCellPipeEscapingOnExtraction(t *testing.T) {
 	doc := &docs.Document{
 		Body: &docs.Body{
