@@ -4582,6 +4582,67 @@ func TestTableCellFormattingExtraction(t *testing.T) {
 	}
 }
 
+func TestTableCellPipeEscapingOnExtraction(t *testing.T) {
+	doc := &docs.Document{
+		Body: &docs.Body{
+			Content: []*docs.StructuralElement{
+				{
+					Table: &docs.Table{
+						TableRows: []*docs.TableRow{
+							{
+								TableCells: []*docs.TableCell{
+									{
+										Content: []*docs.StructuralElement{
+											{
+												Paragraph: &docs.Paragraph{
+													Elements: []*docs.ParagraphElement{
+														{
+															TextRun: &docs.TextRun{
+																Content:   "Header\n",
+																TextStyle: &docs.TextStyle{},
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+							{
+								TableCells: []*docs.TableCell{
+									{
+										Content: []*docs.StructuralElement{
+											{
+												Paragraph: &docs.Paragraph{
+													Elements: []*docs.ParagraphElement{
+														{
+															TextRun: &docs.TextRun{
+																Content:   "a | b\n",
+																TextStyle: &docs.TextStyle{},
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	md := extractMarkdown(doc)
+
+	if !strings.Contains(md, `a \| b`) {
+		t.Errorf("expected escaped pipe in cell content, got: %s", md)
+	}
+}
+
 func TestRoundTrip_CodeBlock(t *testing.T) {
 	// Start with markdown
 	originalMarkdown := "Some intro text.\n\n```python\ndef hello():\n    return \"world\"\n```\n\nSome closing text.\n"

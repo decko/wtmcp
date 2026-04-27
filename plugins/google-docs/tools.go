@@ -310,8 +310,10 @@ func extractElementMarkdown(sb *strings.Builder, elem *docs.StructuralElement, a
 				}
 				cellContent := strings.TrimRight(cellMD.String(), "\n")
 				cellContent = strings.ReplaceAll(cellContent, "\n", " ")
+				cellContent = strings.TrimSpace(cellContent)
+				cellContent = strings.ReplaceAll(cellContent, "|", `\|`)
 				sb.WriteString(" ")
-				sb.WriteString(strings.TrimSpace(cellContent))
+				sb.WriteString(cellContent)
 				sb.WriteString(" |")
 			}
 			sb.WriteString("\n")
