@@ -2,6 +2,8 @@ package highlighter
 
 import (
 	"testing"
+
+	"google.golang.org/api/docs/v1"
 )
 
 func TestHighlightCode(t *testing.T) {
@@ -45,6 +47,113 @@ func TestHighlightCode(t *testing.T) {
 	}
 	if reconstructed != code {
 		t.Errorf("HighlightCode() text mismatch\ngot:  %q\nwant: %q", reconstructed, code)
+	}
+}
+
+func TestMergeSegments(t *testing.T) {
+	red := &docs.RgbColor{Red: 1.0, Green: 0.0, Blue: 0.0}
+	redCopy := &docs.RgbColor{Red: 1.0, Green: 0.0, Blue: 0.0}
+	blue := &docs.RgbColor{Red: 0.0, Green: 0.0, Blue: 1.0}
+
+	tests := []struct {
+		name     string
+		input    []FormattedSegment
+		wantLen  int
+		wantText string
+	}{
+		{
+			name:     "empty input",
+			input:    []FormattedSegment{},
+			wantLen:  0,
+			wantText: "",
+		},
+		{
+			name:     "single segment",
+			input:    []FormattedSegment{{Text: "hello", Color: red, Bold: false}},
+			wantLen:  1,
+			wantText: "hello",
+		},
+		{
+			name: "same style merges",
+			input: []FormattedSegment{
+				{Text: "hel", Color: red, Bold: true},
+				{Text: "lo", Color: red, Bold: true},
+			},
+			wantLen:  1,
+			wantText: "hello",
+		},
+		{
+			name: "value-equal colors merge",
+			input: []FormattedSegment{
+				{Text: "hel", Color: red, Bold: false},
+				{Text: "lo", Color: redCopy, Bold: false},
+			},
+			wantLen:  1,
+			wantText: "hello",
+		},
+		{
+			name: "different color stays separate",
+			input: []FormattedSegment{
+				{Text: "red", Color: red, Bold: false},
+				{Text: "blue", Color: blue, Bold: false},
+			},
+			wantLen:  2,
+			wantText: "redblue",
+		},
+		{
+			name: "different bold stays separate",
+			input: []FormattedSegment{
+				{Text: "normal", Color: red, Bold: false},
+				{Text: "bold", Color: red, Bold: true},
+			},
+			wantLen:  2,
+			wantText: "normalbold",
+		},
+		{
+			name: "nil colors merge",
+			input: []FormattedSegment{
+				{Text: "a", Color: nil, Bold: false},
+				{Text: "b", Color: nil, Bold: false},
+			},
+			wantLen:  1,
+			wantText: "ab",
+		},
+		{
+			name: "nil vs non-nil stays separate",
+			input: []FormattedSegment{
+				{Text: "a", Color: nil, Bold: false},
+				{Text: "b", Color: red, Bold: false},
+			},
+			wantLen:  2,
+			wantText: "ab",
+		},
+		{
+			name: "merge-split-merge pattern",
+			input: []FormattedSegment{
+				{Text: "a", Color: red, Bold: false},
+				{Text: "b", Color: red, Bold: false},
+				{Text: "c", Color: blue, Bold: false},
+				{Text: "d", Color: blue, Bold: false},
+			},
+			wantLen:  2,
+			wantText: "abcd",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := MergeSegments(tt.input)
+			if len(result) != tt.wantLen {
+				t.Errorf("MergeSegments() len = %d, want %d", len(result), tt.wantLen)
+			}
+			var text string
+			for _, seg := range result {
+				text += seg.Text
+			}
+			if text != tt.wantText {
+				t.Errorf("MergeSegments() text = %q, want %q", text, tt.wantText)
+			}
+		})
 	}
 }
 

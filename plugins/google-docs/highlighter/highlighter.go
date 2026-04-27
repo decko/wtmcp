@@ -55,7 +55,43 @@ func HighlightCode(code, language string, config *Config) ([]FormattedSegment, e
 		})
 	}
 
-	return segments, nil
+	return MergeSegments(segments), nil
+}
+
+// MergeSegments merges consecutive segments that share the same styling
+// (color, bold, italic) by concatenating their text. This reduces the
+// number of Google Docs API requests generated per code block.
+func MergeSegments(segments []FormattedSegment) []FormattedSegment {
+	if len(segments) <= 1 {
+		return segments
+	}
+
+	merged := make([]FormattedSegment, 0, len(segments))
+	merged = append(merged, segments[0])
+
+	for i := 1; i < len(segments); i++ {
+		prev := &merged[len(merged)-1]
+		curr := segments[i]
+
+		if prev.Bold == curr.Bold && prev.Italic == curr.Italic && sameColor(prev.Color, curr.Color) {
+			prev.Text += curr.Text
+		} else {
+			merged = append(merged, curr)
+		}
+	}
+
+	return merged
+}
+
+// sameColor compares two RgbColor pointers by value.
+func sameColor(a, b *docs.RgbColor) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Red == b.Red && a.Green == b.Green && a.Blue == b.Blue
 }
 
 // mapTokenToStyle maps a chroma token type to a config style.
