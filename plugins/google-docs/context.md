@@ -113,6 +113,20 @@ Write or append text to a Google Doc with optional markdown formatting. When mar
 
 When `is_markdown` is false, text is inserted as plain text without formatting.
 
+### gdocs_write_markdown
+
+Write Markdown-formatted text to a Google Doc with rich formatting. Does not support tables — use `gdocs_write_text` with `is_markdown: true` for table content.
+
+**Parameters:**
+- `document_id_or_url` (required): Document ID or Google Docs URL
+- `markdown` (required): Markdown content to write
+- `append_to_end` (default: true): Append text to the end of the document
+- `insert_index` (default: 0): Character index for insertion (used if append_to_end is false)
+
+**Returns:** Document ID, title, status, insert index, character count, replies, tables
+
+**Supported formatting:** Same as `gdocs_write_text` markdown mode (headings, bold, italic, underline, strikethrough, links, lists, code blocks, inline code, smart chips) **except tables**.
+
 ### gdocs_create_document
 
 Create a new Google Doc with a specified title.
