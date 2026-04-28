@@ -103,10 +103,10 @@ func (m *Manager) Discover(dirs []string, userDir string) error {
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
+			if !os.IsNotExist(err) {
+				log.Printf("WARNING: skipping plugin dir %s: %v", dir, err)
 			}
-			return fmt.Errorf("read plugin dir %s: %w", dir, err)
+			continue
 		}
 		isUserDir := userDir != "" && dir == userDir
 
