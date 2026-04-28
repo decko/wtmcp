@@ -45,9 +45,15 @@ func (g EnvGroups) Get(group string) map[string]string {
 // per-group errors for files that could not be loaded (bad
 // permissions, symlinks, parse errors). Plugins whose credential
 // group appears in Errors should be disabled, not loaded.
+//
+// DirError is set when the env.d directory itself has a problem
+// (bad permissions, stat failure). When set, no files were read
+// and Groups is empty — all credential-dependent plugins should
+// be disabled.
 type EnvLoadResult struct {
-	Groups EnvGroups
-	Errors map[string]string // group name → human-readable error
+	Groups   EnvGroups
+	Errors   map[string]string // group name → human-readable error
+	DirError string            // directory-level error, if any
 }
 
 // ResolveEnvDir returns the env.d directory path from config or default.
@@ -63,26 +69,29 @@ func ResolveEnvDir(cfg *Config, workdir string) string {
 // the .env extension. Variables are NOT loaded into the process
 // environment — they are only available through the returned map.
 //
-// Directory-level errors (missing permissions) are fatal and returned
-// as the error. Per-file errors (bad permissions, symlinks, parse
-// failures) are captured in EnvLoadResult.Errors and the file is
-// skipped — other groups continue loading normally.
+// Directory-level errors (bad permissions, stat failures) are stored
+// in EnvLoadResult.DirError and no files are read — all credential-
+// dependent plugins should be disabled. Per-file errors (bad
+// permissions, symlinks, parse failures) are captured in
+// EnvLoadResult.Errors and the file is skipped — other groups
+// continue loading normally.
 func LoadEnvGroups(envDir string) (EnvLoadResult, error) {
 	result := EnvLoadResult{
 		Groups: make(EnvGroups),
 		Errors: make(map[string]string),
 	}
 
-	// Check env.d directory permissions — fatal if bad
 	dirInfo, err := os.Stat(envDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return result, nil
 		}
-		return result, fmt.Errorf("stat %s: %w", envDir, err)
+		result.DirError = fmt.Sprintf("stat %s: %v", envDir, err)
+		return result, nil //nolint:nilerr // captured in DirError
 	}
-	if err := checkPermissions(envDir, dirInfo); err != nil {
-		return result, err
+	if err := CheckPermissions(envDir, dirInfo); err != nil {
+		result.DirError = err.Error()
+		return result, nil //nolint:nilerr // captured in DirError
 	}
 
 	entries, err := os.ReadDir(envDir)
@@ -136,7 +145,7 @@ func loadEnvFile(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stat %s: %w", path, err)
 	}
-	if err := checkPermissions(path, info); err != nil {
+	if err := CheckPermissions(path, info); err != nil {
 		return nil, err
 	}
 
@@ -157,10 +166,10 @@ func rejectSymlink(path string) error {
 	return nil
 }
 
-// checkPermissions refuses to proceed if a file or directory has
+// CheckPermissions refuses to proceed if a file or directory has
 // group or other read/write/execute bits set, like OpenSSH does for
 // private keys.
-func checkPermissions(path string, info os.FileInfo) error {
+func CheckPermissions(path string, info os.FileInfo) error {
 	mode := info.Mode().Perm()
 	if mode&0o077 != 0 {
 		return fmt.Errorf(

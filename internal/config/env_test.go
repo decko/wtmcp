@@ -148,19 +148,53 @@ func TestLoadEnvGroupsPartialOnBadFilePerms(t *testing.T) {
 	}
 }
 
-func TestLoadEnvGroupsRejectsLooseDirPerms(t *testing.T) {
+func TestLoadEnvGroupsLooseDirPermsSetsDirError(t *testing.T) {
 	dir := t.TempDir()
 	envDir := filepath.Join(dir, "env.d")
 	if err := os.MkdirAll(envDir, 0o755); err != nil { //nolint:gosec // intentionally insecure for test
 		t.Fatal(err)
 	}
 
-	_, err := LoadEnvGroups(envDir)
-	if err == nil {
-		t.Fatal("expected error for world-readable env.d directory")
+	result, err := LoadEnvGroups(envDir)
+	if err != nil {
+		t.Fatalf("should not return fatal error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "must not be accessible") {
-		t.Errorf("error = %q, want permission error", err)
+	if result.DirError == "" {
+		t.Fatal("expected DirError to be set")
+	}
+	if !strings.Contains(result.DirError, "must not be accessible") {
+		t.Errorf("DirError = %q, want permission error", result.DirError)
+	}
+	if len(result.Groups) != 0 {
+		t.Errorf("expected empty groups, got %d", len(result.Groups))
+	}
+}
+
+func TestCheckPermissions(t *testing.T) {
+	dir := t.TempDir()
+
+	good := filepath.Join(dir, "good")
+	if err := os.WriteFile(good, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckPermissions(good, info); err != nil {
+		t.Errorf("expected no error for 0600, got: %v", err)
+	}
+
+	bad := filepath.Join(dir, "bad")
+	if err := os.WriteFile(bad, nil, 0o644); err != nil { //nolint:gosec // intentionally insecure for test
+		t.Fatal(err)
+	}
+	info, err = os.Stat(bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckPermissions(bad, info); err == nil {
+		t.Error("expected error for 0644")
 	}
 }
 
