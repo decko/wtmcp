@@ -182,18 +182,21 @@ func CheckPermissions(path string, info os.FileInfo) error {
 }
 
 // parseEnvFile reads a .env file and returns its variables as a map.
-// Lines starting with # are comments. Empty lines are skipped.
-// Format: KEY=VALUE (double-quoted and single-quoted values have
-// quotes stripped). The "export" prefix is also stripped.
 func parseEnvFile(path string) (map[string]string, error) {
-	f, err := os.Open(path) //nolint:gosec // env file path from config
+	data, err := os.ReadFile(path) //nolint:gosec // env file path from config
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	return parseEnvData(data)
+}
 
+// parseEnvData parses key=value pairs from in-memory data.
+// Lines starting with # are comments. Empty lines are skipped.
+// Format: KEY=VALUE (double-quoted and single-quoted values have
+// quotes stripped). The "export" prefix is also stripped.
+func parseEnvData(data []byte) (map[string]string, error) {
 	vars := make(map[string]string)
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
