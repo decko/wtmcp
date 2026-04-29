@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -20,6 +21,7 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/config"
 	"github.com/LeGambiArt/wtmcp/internal/plugin"
 	"github.com/LeGambiArt/wtmcp/internal/proxy"
+	"github.com/LeGambiArt/wtmcp/internal/secrets/vault"
 	"github.com/LeGambiArt/wtmcp/internal/server"
 	"github.com/LeGambiArt/wtmcp/internal/stats"
 )
@@ -276,6 +278,9 @@ func runCheck() error {
 		fmt.Printf("plugin mode: default\n")
 	}
 	fmt.Printf("user plugins: %v\n", result.Config.Plugins.UserPlugins)
+
+	printVaultStatus(result)
+
 	fmt.Printf("env groups: %d\n", len(result.EnvGroups))
 	for group := range result.EnvGroups {
 		fmt.Printf("  - %s\n", group)
@@ -327,4 +332,82 @@ func runCheck() error {
 	}
 
 	return nil
+}
+
+// printVaultStatus reports vault password configuration and per-group
+// encryption status for the check command.
+func printVaultStatus(result *plugin.DiscoveryResult) {
+	cfg := result.Config
+
+	// Detect password source from config (env vars may already be
+	// consumed by the Discover() closure, so check config fields
+	// and whether any encrypted groups loaded successfully).
+	passwordSource := "not configured"
+	switch {
+	case cfg.Secrets.VaultPasswordFile != "":
+		passwordSource = fmt.Sprintf("file (%s)", cfg.Secrets.VaultPasswordFile)
+	case len(result.EnvGroups) > 0 || len(result.EnvErrors) > 0:
+		passwordSource = "configured"
+	}
+	fmt.Printf("vault password: %s\n", passwordSource)
+
+	if len(cfg.Secrets.VaultIDs) > 0 {
+		fmt.Printf("vault IDs: %d configured\n", len(cfg.Secrets.VaultIDs))
+	}
+
+	if result.EnvDir == "" || result.EnvDirError != "" {
+		return
+	}
+
+	entries, err := os.ReadDir(result.EnvDir)
+	if err != nil {
+		return
+	}
+
+	// Use a fresh resolver for test-decryption. Env-var-based
+	// passwords were already consumed by Discover(), but the
+	// resolver's internal cache preserves them for reuse here.
+	resolve := config.ResolveVaultPassword(cfg)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".env") {
+			continue
+		}
+		group := strings.TrimSuffix(entry.Name(), ".env")
+		path := filepath.Join(result.EnvDir, entry.Name())
+
+		data, err := os.ReadFile(path) //nolint:gosec // check path from config
+		if err != nil {
+			continue
+		}
+
+		if !vault.IsAnsibleVault(data) {
+			continue
+		}
+
+		header, err := vault.ParseHeader(strings.SplitN(string(data), "\n", 2)[0])
+		if err != nil {
+			fmt.Printf("  - %s (encrypted, invalid header)\n", group)
+			continue
+		}
+
+		vaultInfo := "vault " + header.Version
+		if header.VaultID != "" {
+			vaultInfo += " id=" + header.VaultID
+		}
+
+		password, err := resolve(header.VaultID)
+		if err != nil {
+			fmt.Printf("  - %s (encrypted, %s, no password)\n", group, vaultInfo)
+			continue
+		}
+
+		plaintext, err := vault.Decrypt(data, password)
+		vault.ZeroBytes(password)
+		vault.ZeroBytes(plaintext)
+		if err != nil {
+			fmt.Printf("  - %s (encrypted, %s, decryption failed)\n", group, vaultInfo)
+		} else {
+			fmt.Printf("  - %s (encrypted, %s, decryption ok)\n", group, vaultInfo)
+		}
+	}
 }

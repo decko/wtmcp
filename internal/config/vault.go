@@ -95,7 +95,9 @@ func resolveDefaultPassword(cfg *Config, envCache map[string][]byte, consumed ma
 // inheritance. Returns nil if not set or empty.
 func readEnvCached(key string, cache map[string][]byte, consumed map[string]bool) []byte {
 	if cached, ok := cache[key]; ok {
-		return cached
+		cp := make([]byte, len(cached))
+		copy(cp, cached)
+		return cp
 	}
 	if consumed[key] {
 		return nil
@@ -111,7 +113,9 @@ func readEnvCached(key string, cache map[string][]byte, consumed map[string]bool
 	cache[key] = password
 	os.Unsetenv(key) //nolint:errcheck // best-effort cleanup
 	consumed[key] = true
-	return password
+	cp := make([]byte, len(password))
+	copy(cp, password)
+	return cp
 }
 
 // ReadPasswordFile reads a vault password from a file with full

@@ -20,6 +20,7 @@ type DiscoveryResult struct {
 	Workdir     string
 	ConfigPath  string // Resolved config file path (for write-back)
 	Config      *config.Config
+	EnvDir      string // Resolved env.d directory path
 	EnvGroups   map[string]map[string]string
 	EnvErrors   map[string]string
 	EnvDirError string // env.d directory-level error, if any
@@ -89,6 +90,7 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 		Workdir:     workdir,
 		ConfigPath:  cfgPath,
 		Config:      cfg,
+		EnvDir:      envDir,
 		EnvGroups:   envResult.Groups,
 		EnvErrors:   envResult.Errors,
 		EnvDirError: envResult.DirError,

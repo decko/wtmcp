@@ -205,6 +205,7 @@ func decryptAndParse(data []byte, opts EnvLoadOptions) (map[string]string, error
 	}
 
 	plaintext, err := vault.Decrypt(data, password)
+	vault.ZeroBytes(password)
 	if err != nil {
 		return nil, err
 	}
