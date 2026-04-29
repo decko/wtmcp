@@ -50,7 +50,10 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 
 	// Load scoped env.d groups (not into process env)
 	envDir := config.ResolveEnvDir(cfg, workdir)
-	envResult, err := config.LoadEnvGroups(envDir)
+	envOpts := config.EnvLoadOptions{
+		VaultPassword: config.ResolveVaultPassword(cfg),
+	}
+	envResult, err := config.LoadEnvGroups(envDir, envOpts)
 	if err != nil {
 		return nil, fmt.Errorf("load env: %w", err)
 	}
@@ -70,7 +73,7 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 	}
 
 	// Create manager with nil dependencies (discovery only)
-	mgr := NewManager(nil, nil, nil, cfg, envResult.Groups, envResult.Errors, envResult.DirError, workdir, envDir)
+	mgr := NewManager(nil, nil, nil, cfg, envResult.Groups, envResult.Errors, envResult.DirError, workdir, envDir, envOpts)
 
 	// Discover plugins (without loading/starting them)
 	if err := mgr.Discover(cfg.PluginDirs, cfg.UserPluginDir); err != nil {

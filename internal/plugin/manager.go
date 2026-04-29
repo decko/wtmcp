@@ -43,6 +43,7 @@ type Manager struct {
 	envDirError    string            // env.d directory-level error
 	workdir        string
 	envDir         string
+	envLoadOpts    config.EnvLoadOptions
 	authReg        *auth.Registry
 	proxy          *proxy.Proxy
 	cache          cache.Store
@@ -60,7 +61,7 @@ type Manager struct {
 // permissions, stat failure) — all credential-dependent plugins
 // will be disabled. envDir is the resolved env.d directory path
 // used to re-read env files on plugin reload.
-func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *config.Config, envGroups config.EnvGroups, envErrors map[string]string, envDirError, workdir, envDir string) *Manager {
+func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *config.Config, envGroups config.EnvGroups, envErrors map[string]string, envDirError, workdir, envDir string, envLoadOpts config.EnvLoadOptions) *Manager {
 	if envGroups == nil {
 		envGroups = make(config.EnvGroups)
 	}
@@ -77,6 +78,7 @@ func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *conf
 		envDirError:    envDirError,
 		workdir:        workdir,
 		envDir:         envDir,
+		envLoadOpts:    envLoadOpts,
 		authReg:        authReg,
 		proxy:          p,
 		cache:          c,
@@ -579,7 +581,7 @@ func (m *Manager) Reload(ctx context.Context, name string) error {
 			log.Printf("[%s] env.d directory permissions fixed", name)
 		}
 
-		vars, err := config.LoadSingleEnvGroup(m.envDir, group)
+		vars, err := config.LoadSingleEnvGroup(m.envDir, group, m.envLoadOpts)
 		if err != nil {
 			if _, wasDisabled := m.disabled[name]; wasDisabled {
 				return fmt.Errorf("env group %s still has issues: %w", group, err)
@@ -694,6 +696,17 @@ func (m *Manager) sanitizeReason(reason string) string {
 	}
 	if m.envDir != "" && !strings.HasPrefix(m.envDir, m.workdir+"/") {
 		reason = strings.ReplaceAll(reason, m.envDir, "env.d")
+	}
+	if m.cfg != nil && m.cfg.Secrets.VaultPasswordFile != "" {
+		reason = strings.ReplaceAll(reason, m.cfg.Secrets.VaultPasswordFile, "<vault-password-file>")
+	}
+	if m.cfg == nil {
+		return reason
+	}
+	for _, path := range m.cfg.Secrets.VaultIDs {
+		if path != "" {
+			reason = strings.ReplaceAll(reason, path, "<vault-password-file>")
+		}
 	}
 	return reason
 }

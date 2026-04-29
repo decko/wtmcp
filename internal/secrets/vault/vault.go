@@ -42,7 +42,7 @@ func Decrypt(data, password []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vault decryption failed: key derivation: %w", err)
 	}
-	defer zeroBytes(derived)
+	defer ZeroBytes(derived)
 
 	aesKey := derived[aesKeyOffset : aesKeyOffset+aesKeyLen]
 	hmacKey := derived[hmacKeyOffset : hmacKeyOffset+hmacKeyLen]
@@ -69,14 +69,14 @@ func Decrypt(data, password []byte) ([]byte, error) {
 
 	unpadded, err := pkcs7Unpad(plaintext)
 	if err != nil {
-		zeroBytes(plaintext)
+		ZeroBytes(plaintext)
 		return nil, fmt.Errorf("vault decryption failed: %w", err)
 	}
 
 	if len(unpadded) != len(plaintext) {
 		result := make([]byte, len(unpadded))
 		copy(result, unpadded)
-		zeroBytes(plaintext)
+		ZeroBytes(plaintext)
 		return result, nil
 	}
 	return plaintext, nil
@@ -113,13 +113,13 @@ func encryptWithHeader(data, password []byte, header string) ([]byte, error) {
 	}
 
 	padded := pkcs7Pad(data, aes.BlockSize)
-	defer zeroBytes(padded)
+	defer ZeroBytes(padded)
 
 	derived, err := pbkdf2.Key(sha256.New, string(password), salt, pbkdf2Iterations, pbkdf2KeyLen)
 	if err != nil {
 		return nil, fmt.Errorf("key derivation: %w", err)
 	}
-	defer zeroBytes(derived)
+	defer ZeroBytes(derived)
 
 	aesKey := derived[aesKeyOffset : aesKeyOffset+aesKeyLen]
 	hmacKey := derived[hmacKeyOffset : hmacKeyOffset+hmacKeyLen]
@@ -176,10 +176,10 @@ func pkcs7Unpad(data []byte) ([]byte, error) {
 	return data[:len(data)-padding], nil
 }
 
-// zeroBytes overwrites a byte slice with zeros. Best-effort memory
+// ZeroBytes overwrites a byte slice with zeros. Best-effort memory
 // hygiene — Go's GC may retain copies, but explicit zeroing reduces
 // the exposure window.
-func zeroBytes(b []byte) {
+func ZeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}

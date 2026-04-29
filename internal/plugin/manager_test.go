@@ -53,7 +53,7 @@ func newTestManager(t *testing.T) *Manager {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	return NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	return NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 }
 
 var echoScript = `#!/bin/bash
@@ -101,7 +101,7 @@ func TestManagerDiscoverSkipsConfigDisabled(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -123,7 +123,7 @@ func TestManagerDiscoverPartialDisable(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -172,7 +172,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -192,7 +192,7 @@ func TestManagerDiscoverWarnsUnknownDisabled(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	// Capture log output
 	var buf strings.Builder
@@ -245,7 +245,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	var buf strings.Builder
 	log.SetOutput(&buf)
@@ -271,7 +271,7 @@ func TestManagerConfigDisabledPlugins(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -533,7 +533,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "env.d has mode 0755, must not be accessible by group/other", dir, "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "env.d has mode 0755, must not be accessible by group/other", dir, "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -583,7 +583,7 @@ tools:
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
 	m := NewManager(authReg, p, cacheStore, cfg, nil, nil,
 		"env.d has mode 0755, must not be accessible by group/other",
-		dir, envDir)
+		dir, envDir, config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -661,7 +661,7 @@ tools:
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
 	m := NewManager(authReg, p, cacheStore, cfg, nil, nil,
 		"env.d had mode 0755, directory error",
-		dir, envDir)
+		dir, envDir, config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -807,7 +807,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -845,7 +845,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -886,7 +886,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -928,7 +928,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -969,7 +969,7 @@ tools:
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -995,7 +995,7 @@ func TestCheckDisabledProvider_NoAuth(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -1019,7 +1019,7 @@ func TestAllowlistOnlyLoadsEnabledPlugins(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -1054,7 +1054,7 @@ func TestAllowlistOverridesDisabled(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)
@@ -1082,7 +1082,7 @@ func TestEmptyAllowlistUsesDefault(t *testing.T) {
 	authReg := auth.NewRegistry()
 	cacheStore := cache.NewMemoryStore()
 	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
-	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "")
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "", "", "", config.EnvLoadOptions{})
 
 	if err := m.Discover([]string{dir}, ""); err != nil {
 		t.Fatalf("Discover: %v", err)

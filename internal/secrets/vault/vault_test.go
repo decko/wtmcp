@@ -363,7 +363,7 @@ func TestPKCS7UnpadInvalid(t *testing.T) {
 
 func TestZeroBytes(t *testing.T) {
 	data := []byte("sensitive-data-here")
-	zeroBytes(data)
+	ZeroBytes(data)
 	for i, b := range data {
 		if b != 0 {
 			t.Errorf("byte %d is %d, expected 0", i, b)

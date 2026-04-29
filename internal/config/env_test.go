@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/LeGambiArt/wtmcp/internal/secrets/vault"
 )
 
 func TestWorkDir(t *testing.T) {
@@ -41,7 +43,7 @@ func TestLoadEnvGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := LoadEnvGroups(envDir)
+	result, err := LoadEnvGroups(envDir, EnvLoadOptions{})
 	if err != nil {
 		t.Fatalf("LoadEnvGroups: %v", err)
 	}
@@ -90,7 +92,7 @@ func TestLoadEnvGroupsNotInProcessEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := LoadEnvGroups(envDir)
+	_, err := LoadEnvGroups(envDir, EnvLoadOptions{})
 	if err != nil {
 		t.Fatalf("LoadEnvGroups: %v", err)
 	}
@@ -102,7 +104,7 @@ func TestLoadEnvGroupsNotInProcessEnv(t *testing.T) {
 }
 
 func TestLoadEnvGroupsMissingDir(t *testing.T) {
-	result, err := LoadEnvGroups("/nonexistent/path/env.d")
+	result, err := LoadEnvGroups("/nonexistent/path/env.d", EnvLoadOptions{})
 	if err != nil {
 		t.Errorf("should not error on missing dir: %v", err)
 	}
@@ -127,7 +129,7 @@ func TestLoadEnvGroupsPartialOnBadFilePerms(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := LoadEnvGroups(envDir)
+	result, err := LoadEnvGroups(envDir, EnvLoadOptions{})
 	if err != nil {
 		t.Fatalf("should not return fatal error: %v", err)
 	}
@@ -155,7 +157,7 @@ func TestLoadEnvGroupsLooseDirPermsSetsDirError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := LoadEnvGroups(envDir)
+	result, err := LoadEnvGroups(envDir, EnvLoadOptions{})
 	if err != nil {
 		t.Fatalf("should not return fatal error: %v", err)
 	}
@@ -219,7 +221,7 @@ func TestLoadEnvGroupsRejectsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := LoadEnvGroups(envDir)
+	result, err := LoadEnvGroups(envDir, EnvLoadOptions{})
 	if err != nil {
 		t.Fatalf("should not return fatal error: %v", err)
 	}
@@ -248,7 +250,7 @@ func TestLoadSingleEnvGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vars, err := LoadSingleEnvGroup(envDir, "mygroup")
+	vars, err := LoadSingleEnvGroup(envDir, "mygroup", EnvLoadOptions{})
 	if err != nil {
 		t.Fatalf("LoadSingleEnvGroup: %v", err)
 	}
@@ -268,7 +270,7 @@ func TestLoadSingleEnvGroupBadPerms(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := LoadSingleEnvGroup(envDir, "bad")
+	_, err := LoadSingleEnvGroup(envDir, "bad", EnvLoadOptions{})
 	if err == nil {
 		t.Fatal("expected error for bad permissions")
 	}
@@ -313,6 +315,122 @@ EMPTY_LINE_ABOVE=yes
 		if got := vars[key]; got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
 		}
+	}
+}
+
+func TestLoadEnvGroupsVaultEncrypted(t *testing.T) {
+	dir := t.TempDir()
+	envDir := filepath.Join(dir, "env.d")
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	password := []byte("test-password")
+	plaintext := []byte("SECRET_KEY=vault-decrypted-value\nAPI_URL=https://api.example.com\n")
+
+	encrypted, err := vault.Encrypt(plaintext, password)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(envDir, "secure.env"), encrypted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, "plain.env"), []byte("PLAIN_KEY=plain-value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := EnvLoadOptions{
+		VaultPassword: func(_ string) ([]byte, error) {
+			return password, nil
+		},
+	}
+	result, err := LoadEnvGroups(envDir, opts)
+	if err != nil {
+		t.Fatalf("LoadEnvGroups: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+
+	secureVars := result.Groups["secure"]
+	if secureVars == nil {
+		t.Fatal("missing 'secure' group")
+	}
+	if secureVars["SECRET_KEY"] != "vault-decrypted-value" {
+		t.Errorf("SECRET_KEY = %q", secureVars["SECRET_KEY"])
+	}
+	if secureVars["API_URL"] != "https://api.example.com" {
+		t.Errorf("API_URL = %q", secureVars["API_URL"])
+	}
+
+	plainVars := result.Groups["plain"]
+	if plainVars == nil {
+		t.Fatal("missing 'plain' group")
+	}
+	if plainVars["PLAIN_KEY"] != "plain-value" {
+		t.Errorf("PLAIN_KEY = %q", plainVars["PLAIN_KEY"])
+	}
+}
+
+func TestLoadEnvGroupsVaultNoPassword(t *testing.T) {
+	dir := t.TempDir()
+	envDir := filepath.Join(dir, "env.d")
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	encrypted, err := vault.Encrypt([]byte("KEY=value\n"), []byte("password"))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(envDir, "locked.env"), encrypted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := LoadEnvGroups(envDir, EnvLoadOptions{})
+	if err != nil {
+		t.Fatalf("LoadEnvGroups: %v", err)
+	}
+	if _, ok := result.Errors["locked"]; !ok {
+		t.Fatal("expected error for 'locked' group (no password)")
+	}
+	if !strings.Contains(result.Errors["locked"], "no vault password configured") {
+		t.Errorf("error = %q", result.Errors["locked"])
+	}
+}
+
+func TestLoadEnvGroupsVaultWrongPassword(t *testing.T) {
+	dir := t.TempDir()
+	envDir := filepath.Join(dir, "env.d")
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	encrypted, err := vault.Encrypt([]byte("KEY=value\n"), []byte("correct-password"))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(envDir, "wrong.env"), encrypted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := EnvLoadOptions{
+		VaultPassword: func(_ string) ([]byte, error) {
+			return []byte("wrong-password"), nil
+		},
+	}
+	result, err := LoadEnvGroups(envDir, opts)
+	if err != nil {
+		t.Fatalf("LoadEnvGroups: %v", err)
+	}
+	if _, ok := result.Errors["wrong"]; !ok {
+		t.Fatal("expected error for 'wrong' group (wrong password)")
+	}
+	if !strings.Contains(result.Errors["wrong"], "HMAC verification failed") {
+		t.Errorf("error = %q", result.Errors["wrong"])
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/LeGambiArt/wtmcp/internal/secrets/vault"
 )
 
 // WorkDir returns the base directory for all wtmcp data.
@@ -39,6 +41,21 @@ func (g EnvGroups) Get(group string) map[string]string {
 		return nil
 	}
 	return g[group]
+}
+
+// EnvLoadOptions controls optional behavior of env.d loading.
+type EnvLoadOptions struct {
+	// VaultPassword resolves the vault password for the given vault ID.
+	// Called with "" for Vault 1.1 files (no label), or the label
+	// string for Vault 1.2 files. Returns nil, nil if no password is
+	// configured (encrypted files will produce per-group errors).
+	//
+	// For env var sources: caches value on first read, then unsets the
+	// env var. For file sources: re-reads on each call.
+	//
+	// May be nil — if nil, encrypted files produce per-group errors
+	// (same behavior as "no password configured").
+	VaultPassword func(vaultID string) ([]byte, error)
 }
 
 // EnvLoadResult holds both successfully loaded env groups and
@@ -75,7 +92,7 @@ func ResolveEnvDir(cfg *Config, workdir string) string {
 // permissions, symlinks, parse failures) are captured in
 // EnvLoadResult.Errors and the file is skipped — other groups
 // continue loading normally.
-func LoadEnvGroups(envDir string) (EnvLoadResult, error) {
+func LoadEnvGroups(envDir string, opts EnvLoadOptions) (EnvLoadResult, error) {
 	result := EnvLoadResult{
 		Groups: make(EnvGroups),
 		Errors: make(map[string]string),
@@ -113,7 +130,7 @@ func LoadEnvGroups(envDir string) (EnvLoadResult, error) {
 		group := strings.TrimSuffix(name, ".env")
 		path := filepath.Join(envDir, name)
 
-		vars, err := loadEnvFile(path)
+		vars, err := loadEnvFile(path, opts)
 		if err != nil {
 			relPath := filepath.Join("env.d", name)
 			result.Errors[group] = fmt.Sprintf("%s: %v", relPath, err)
@@ -130,14 +147,18 @@ func LoadEnvGroups(envDir string) (EnvLoadResult, error) {
 // group name. Performs symlink rejection, permission checks, and
 // parsing — same validation as LoadEnvGroups. Used by the plugin
 // reload path to re-read credentials after the user fixes permissions.
-func LoadSingleEnvGroup(envDir, group string) (map[string]string, error) {
+func LoadSingleEnvGroup(envDir, group string, opts EnvLoadOptions) (map[string]string, error) {
 	path := filepath.Join(envDir, group+".env")
-	return loadEnvFile(path)
+	return loadEnvFile(path, opts)
 }
 
-// loadEnvFile validates and reads a single env.d file.
-// Rejects symlinks, checks permissions, then parses.
-func loadEnvFile(path string) (map[string]string, error) {
+// maxEnvFileSize is the maximum allowed env.d file size (1 MB).
+const maxEnvFileSize = 1 << 20
+
+// loadEnvFile validates and reads a single env.d file. Rejects
+// symlinks, checks permissions, auto-detects Ansible Vault encrypted
+// files, and decrypts if a vault password is available.
+func loadEnvFile(path string, opts EnvLoadOptions) (map[string]string, error) {
 	if err := rejectSymlink(path); err != nil {
 		return nil, err
 	}
@@ -149,8 +170,48 @@ func loadEnvFile(path string) (map[string]string, error) {
 	if err := CheckPermissions(path, info); err != nil {
 		return nil, err
 	}
+	if info.Size() > maxEnvFileSize {
+		return nil, fmt.Errorf("file too large: %d bytes (max %d)", info.Size(), maxEnvFileSize)
+	}
 
-	return parseEnvFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path validated above
+	if err != nil {
+		return nil, err
+	}
+
+	if vault.IsAnsibleVault(data) {
+		return decryptAndParse(data, opts)
+	}
+	return parseEnvData(data)
+}
+
+// decryptAndParse decrypts a vault-encrypted env.d file and parses
+// the resulting key=value pairs.
+func decryptAndParse(data []byte, opts EnvLoadOptions) (map[string]string, error) {
+	if opts.VaultPassword == nil {
+		return nil, fmt.Errorf("encrypted file but no vault password configured — " +
+			"set WTMCP_VAULT_PASSWORD or secrets.vault_password_file in config.yaml")
+	}
+
+	lines := strings.SplitN(string(data), "\n", 2)
+	header, err := vault.ParseHeader(lines[0])
+	if err != nil {
+		return nil, fmt.Errorf("invalid vault file format")
+	}
+
+	password, err := opts.VaultPassword(header.VaultID)
+	if err != nil {
+		return nil, err
+	}
+
+	plaintext, err := vault.Decrypt(data, password)
+	if err != nil {
+		return nil, err
+	}
+
+	result, parseErr := parseEnvData(plaintext)
+	vault.ZeroBytes(plaintext)
+	return result, parseErr
 }
 
 // rejectSymlink returns an error if path is a symbolic link.
