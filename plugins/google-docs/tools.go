@@ -1520,65 +1520,17 @@ func insertMarkdownWithTables(docID string, title string, segments []markdownSeg
 					return nil, fmt.Errorf("table %d dimension mismatch: requested %d rows, API returned %d", tableIdx, expectedRows, actualRows)
 				}
 
-				// Populate cells one-by-one with a re-query after each cell.
-				// In a freshly created empty table, even cells within the same row have
-				// overlapping Content[0].StartIndex values. We must process cells sequentially,
-				// re-querying after each to get updated indices for the next cell.
-				for rowIdx, row := range seg.table.rows {
-					for colIdx, cell := range row.cells {
-						// Re-validate table structure on each iteration
-						if rowIdx >= len(elem.Table.TableRows) {
-							return nil, fmt.Errorf("table %d row %d: index out of bounds (table has %d rows)", tableIdx, rowIdx, len(elem.Table.TableRows))
-						}
-						tableRow := elem.Table.TableRows[rowIdx]
-
-						if colIdx >= len(tableRow.TableCells) {
-							return nil, fmt.Errorf("table %d cell[%d,%d]: index out of bounds (row has %d columns)", tableIdx, rowIdx, colIdx, len(tableRow.TableCells))
-						}
-						tableCell := tableRow.TableCells[colIdx]
-
-						if len(tableCell.Content) == 0 {
-							continue
-						}
-
-						cellStartIndex := tableCell.Content[0].StartIndex
-						cellReqs := populateTableCell(&cell, cellStartIndex)
-
-						// Execute this cell's requests
-						if len(cellReqs) > 0 {
-							batchUpdateReq := &docs.BatchUpdateDocumentRequest{Requests: cellReqs}
-							cellResp, err := docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
-							if err != nil {
-								return nil, fmt.Errorf("populate table %d cell[%d,%d]: %w", tableIdx, rowIdx, colIdx, err)
-							}
-							totalReplies += len(cellResp.Replies)
-
-							// Re-query to get updated table structure for next cell.
-							// Skip if this is the last cell to save one API call.
-							isLastCell := (rowIdx == len(seg.table.rows)-1) && (colIdx == len(row.cells)-1)
-							if !isLastCell {
-								doc, err = docsSvc.Documents.Get(docID).Do()
-								if err != nil {
-									return nil, fmt.Errorf("get document after table %d cell[%d,%d]: %w", tableIdx, rowIdx, colIdx, err)
-								}
-								if doc.Body == nil {
-									return nil, fmt.Errorf("document body is nil after table %d cell[%d,%d]", tableIdx, rowIdx, colIdx)
-								}
-
-								// Re-find the table for next iteration
-								elem = nil
-								for _, e := range doc.Body.Content {
-									if e.Table != nil && e.StartIndex >= currentIndex {
-										elem = e
-										break
-									}
-								}
-								if elem == nil || elem.Table == nil {
-									return nil, fmt.Errorf("table %d not found after populating cell[%d,%d]", tableIdx, rowIdx, colIdx)
-								}
-							}
-						}
+				// Populate all cells in a single BatchUpdate using reverse
+				// document order. See collectTableCellRequests for the
+				// correctness invariant.
+				cellReqs := collectTableCellRequests(elem.Table.TableRows, seg.table.rows)
+				if len(cellReqs) > 0 {
+					batchUpdateReq := &docs.BatchUpdateDocumentRequest{Requests: cellReqs}
+					cellResp, err := docsSvc.Documents.BatchUpdate(docID, batchUpdateReq).Do()
+					if err != nil {
+						return nil, fmt.Errorf("populate table %d cells: %w", tableIdx, err)
 					}
+					totalReplies += len(cellResp.Replies)
 				}
 
 				// Update currentIndex to after this table for next segment
@@ -1642,6 +1594,42 @@ func insertMarkdownWithTables(docID string, title string, segments []markdownSeg
 		"replies":      len(resp.Replies),
 		"tables":       0,
 	}, nil
+}
+
+// collectTableCellRequests builds all cell-population requests for a table in
+// reverse document order (last row/col first), suitable for a single BatchUpdate.
+//
+// INVARIANT: cells must be iterated in reverse document order. The Google Docs
+// BatchUpdate API processes requests sequentially. Inserting content at a later
+// document position shifts indices forward past that point but does not affect
+// earlier positions. By processing from the last cell to the first, each cell's
+// StartIndex (read from a single Get call) remains valid when its requests
+// execute. Within each cell, populateTableCell interleaves InsertText and
+// UpdateTextStyle per segment, so each style request sees the text that was
+// just inserted. InsertDate and InsertPerson follow the same index-shifting
+// rules (each consumes 1 character of index space).
+func collectTableCellRequests(apiRows []*docs.TableRow, parsedRows []tableRow) []*docs.Request {
+	var allReqs []*docs.Request
+	for r := len(parsedRows) - 1; r >= 0; r-- {
+		if r >= len(apiRows) {
+			continue
+		}
+		row := parsedRows[r]
+		apiRow := apiRows[r]
+		for c := len(row.cells) - 1; c >= 0; c-- {
+			if c >= len(apiRow.TableCells) {
+				continue
+			}
+			apiCell := apiRow.TableCells[c]
+			if len(apiCell.Content) == 0 {
+				continue
+			}
+			cellStartIndex := apiCell.Content[0].StartIndex
+			cellReqs := populateTableCell(&row.cells[c], cellStartIndex)
+			allReqs = append(allReqs, cellReqs...)
+		}
+	}
+	return allReqs
 }
 
 // populateTableCell creates requests to populate a single table cell with content.
