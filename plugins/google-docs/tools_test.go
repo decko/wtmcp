@@ -5385,3 +5385,327 @@ func TestAllSupportedLanguages(t *testing.T) {
 		})
 	}
 }
+
+func TestReadFileForWrite(t *testing.T) {
+	// Save and restore the global workDir between tests
+	origWorkDir := workDir
+	t.Cleanup(func() { workDir = origWorkDir })
+
+	t.Run("valid file in workDir", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+		path := filepath.Join(dir, "test.md")
+		if err := os.WriteFile(path, []byte("hello world"), 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		data, err := readFileForWrite(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if string(data) != "hello world" {
+			t.Errorf("got %q, want %q", string(data), "hello world")
+		}
+	})
+
+	t.Run("relative path resolved against workDir", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+		if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("relative"), 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		data, err := readFileForWrite("notes.md")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if string(data) != "relative" {
+			t.Errorf("got %q, want %q", string(data), "relative")
+		}
+	})
+
+	t.Run("path traversal rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+
+		_, err := readFileForWrite("../../../etc/hostname")
+		if err == nil {
+			t.Fatal("expected error for path traversal")
+		}
+		if !strings.Contains(err.Error(), "escapes working directory") &&
+			!strings.Contains(err.Error(), "resolve path") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("absolute path outside workDir rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+
+		// Create a file outside workDir
+		outside := t.TempDir()
+		outsidePath := filepath.Join(outside, "secret.txt")
+		if err := os.WriteFile(outsidePath, []byte("secret"), 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		_, err := readFileForWrite(outsidePath)
+		if err == nil {
+			t.Fatal("expected error for absolute path outside workDir")
+		}
+		if !strings.Contains(err.Error(), "escapes working directory") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("symlink pointing outside workDir rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+
+		outside := t.TempDir()
+		outsidePath := filepath.Join(outside, "secret.txt")
+		if err := os.WriteFile(outsidePath, []byte("secret"), 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		linkPath := filepath.Join(dir, "link.md")
+		if err := os.Symlink(outsidePath, linkPath); err != nil {
+			t.Skipf("symlinks not supported: %v", err)
+		}
+
+		_, err := readFileForWrite(linkPath)
+		if err == nil {
+			t.Fatal("expected error for symlink outside workDir")
+		}
+		if !strings.Contains(err.Error(), "escapes working directory") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("workDir is symlink file inside real dir works", func(t *testing.T) {
+		realDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(realDir, "doc.md"), []byte("content"), 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		parent := t.TempDir()
+		linkDir := filepath.Join(parent, "link")
+		if err := os.Symlink(realDir, linkDir); err != nil {
+			t.Skipf("symlinks not supported: %v", err)
+		}
+		workDir = linkDir
+
+		data, err := readFileForWrite("doc.md")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if string(data) != "content" {
+			t.Errorf("got %q, want %q", string(data), "content")
+		}
+	})
+
+	t.Run("non-existent file returns error", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+
+		_, err := readFileForWrite(filepath.Join(dir, "missing.md"))
+		if err == nil {
+			t.Fatal("expected error for non-existent file")
+		}
+	})
+
+	t.Run("directory path rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+		subdir := filepath.Join(dir, "subdir")
+		if err := os.MkdirAll(subdir, 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+
+		_, err := readFileForWrite(subdir)
+		if err == nil {
+			t.Fatal("expected error for directory")
+		}
+		if !strings.Contains(err.Error(), "not a regular file") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("file exceeding size limit rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+		path := filepath.Join(dir, "huge.md")
+		// Create a file just over the limit using sparse file
+		f, err := os.Create(filepath.Clean(path))
+		if err != nil {
+			t.Fatalf("create file: %v", err)
+		}
+		if err := f.Truncate(maxReadFileSize + 1); err != nil {
+			_ = f.Close()
+			t.Fatalf("truncate: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+
+		_, err = readFileForWrite(path)
+		if err == nil {
+			t.Fatal("expected error for oversized file")
+		}
+		if !strings.Contains(err.Error(), "file too large") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("empty file returns empty bytes", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+		path := filepath.Join(dir, "empty.md")
+		if err := os.WriteFile(path, []byte{}, 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		data, err := readFileForWrite(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(data) != 0 {
+			t.Errorf("expected empty bytes, got %d bytes", len(data))
+		}
+	})
+
+	t.Run("path with spaces works", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+		path := filepath.Join(dir, "my document.md")
+		if err := os.WriteFile(path, []byte("spaced"), 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		data, err := readFileForWrite(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if string(data) != "spaced" {
+			t.Errorf("got %q, want %q", string(data), "spaced")
+		}
+	})
+
+	t.Run("empty workDir rejected", func(t *testing.T) {
+		workDir = ""
+
+		_, err := readFileForWrite("/tmp/anything.md")
+		if err == nil {
+			t.Fatal("expected error when workDir is empty")
+		}
+		if !strings.Contains(err.Error(), "requires a configured working directory") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("empty file_path returns error", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+
+		_, err := readFileForWrite("")
+		if err == nil {
+			t.Fatal("expected error for empty file_path")
+		}
+	})
+}
+
+func TestToolWriteContentResolution(t *testing.T) {
+	origWorkDir := workDir
+	t.Cleanup(func() { workDir = origWorkDir })
+
+	t.Run("both content and file_path empty returns error", func(t *testing.T) {
+		p := writeParams{
+			DocumentIDOrURL: "test-doc",
+			IsMarkdown:      true,
+			AppendToEnd:     true,
+		}
+
+		text := p.Content
+		if text == "" && p.FilePath != "" {
+			data, err := readFileForWrite(p.FilePath)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			text = string(data)
+		}
+		if text != "" {
+			t.Fatal("expected empty text when both content and file_path are empty")
+		}
+	})
+
+	t.Run("content provided is used directly", func(t *testing.T) {
+		p := writeParams{
+			DocumentIDOrURL: "test-doc",
+			Content:         "inline text",
+			IsMarkdown:      true,
+			AppendToEnd:     true,
+		}
+
+		text := p.Content
+		if text != "inline text" {
+			t.Errorf("got %q, want %q", text, "inline text")
+		}
+	})
+
+	t.Run("file_path used when content empty", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+		fpath := filepath.Join(dir, "input.md")
+		if err := os.WriteFile(fpath, []byte("from file"), 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		p := writeParams{
+			DocumentIDOrURL: "test-doc",
+			FilePath:        fpath,
+			IsMarkdown:      true,
+			AppendToEnd:     true,
+		}
+
+		text := p.Content
+		if text == "" && p.FilePath != "" {
+			data, err := readFileForWrite(p.FilePath)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			text = string(data)
+		}
+		if text != "from file" {
+			t.Errorf("got %q, want %q", text, "from file")
+		}
+	})
+
+	t.Run("content takes precedence over file_path", func(t *testing.T) {
+		dir := t.TempDir()
+		workDir = dir
+		fpath := filepath.Join(dir, "input.md")
+		if err := os.WriteFile(fpath, []byte("from file"), 0o600); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		p := writeParams{
+			DocumentIDOrURL: "test-doc",
+			Content:         "inline wins",
+			FilePath:        fpath,
+			IsMarkdown:      true,
+			AppendToEnd:     true,
+		}
+
+		text := p.Content
+		if text == "" && p.FilePath != "" {
+			data, err := readFileForWrite(p.FilePath)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			text = string(data)
+		}
+		if text != "inline wins" {
+			t.Errorf("got %q, want %q", text, "inline wins")
+		}
+	})
+}
