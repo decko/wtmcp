@@ -4327,7 +4327,10 @@ func TestCollectTableCellRequests(t *testing.T) {
 		// Should not panic — row 1 is silently skipped
 		reqs := collectTableCellRequests(apiRows, parsedRows)
 
-		// Only row 0 should produce requests
+		// Only row 0 should produce requests (2 cells = 2 InsertText)
+		if len(reqs) != 2 {
+			t.Errorf("expected 2 requests (row 0 only), got %d", len(reqs))
+		}
 		for _, r := range reqs {
 			if r.InsertText != nil {
 				idx := r.InsertText.Location.Index
@@ -4391,6 +4394,56 @@ func TestCollectTableCellRequests(t *testing.T) {
 		for _, r := range reqs {
 			if r.InsertText != nil && r.InsertText.Text == "A" {
 				t.Error("cell with empty Content should be skipped")
+			}
+		}
+	})
+
+	t.Run("dimension mismatch fewer API columns", func(t *testing.T) {
+		apiRows := mkAPIRows([]int64{5})
+		parsedRows := []tableRow{
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "A"}}},
+				{segments: []markdownSegment{{text: "B"}}},
+			}},
+		}
+
+		reqs := collectTableCellRequests(apiRows, parsedRows)
+
+		if len(reqs) != 1 {
+			t.Errorf("expected 1 request (cell A only), got %d", len(reqs))
+		}
+		for _, r := range reqs {
+			if r.InsertText != nil && r.InsertText.Text == "B" {
+				t.Error("cell B has no API column — should be skipped")
+			}
+		}
+	})
+
+	t.Run("exact cell to index mapping", func(t *testing.T) {
+		apiRows := mkAPIRows([]int64{5, 10}, []int64{20, 25})
+		parsedRows := []tableRow{
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "A"}}},
+				{segments: []markdownSegment{{text: "B"}}},
+			}},
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "C"}}},
+				{segments: []markdownSegment{{text: "D"}}},
+			}},
+		}
+
+		reqs := collectTableCellRequests(apiRows, parsedRows)
+
+		expected := map[int64]string{25: "D", 20: "C", 10: "B", 5: "A"}
+		for _, r := range reqs {
+			if r.InsertText != nil {
+				want, ok := expected[r.InsertText.Location.Index]
+				if !ok {
+					t.Errorf("unexpected InsertText at index %d", r.InsertText.Location.Index)
+				} else if r.InsertText.Text != want {
+					t.Errorf("at index %d: got %q, want %q",
+						r.InsertText.Location.Index, r.InsertText.Text, want)
+				}
 			}
 		}
 	})
