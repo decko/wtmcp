@@ -417,7 +417,7 @@ func (m *Manager) preparePlugin(name string) (*Handle, error) {
 	}
 
 	// Resolve config
-	resolvedCfg := m.resolveConfig(manifest)
+	resolvedCfg := m.resolveConfig(name, manifest)
 	cfgJSON, err := json.Marshal(resolvedCfg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal config for %s: %w", name, err)
@@ -745,6 +745,13 @@ func (m *Manager) sanitizeReason(reason string) string {
 // the original path for plaintext files, or the securefile path
 // for encrypted files.
 func (m *Manager) decryptCredentialIfVault(pluginName, path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.Size() > 1<<20 {
+		return "", fmt.Errorf("credential file too large: %d bytes (max 1MB)", info.Size())
+	}
 	data, err := os.ReadFile(path) //nolint:gosec // path from resolved plugin config
 	if err != nil {
 		return "", err
@@ -820,20 +827,160 @@ func (m *Manager) pluginVars(manifest *Manifest) map[string]string {
 	return m.envGroups.Get(manifest.CredentialGroup)
 }
 
-func (m *Manager) resolveConfig(manifest *Manifest) map[string]string {
+func (m *Manager) resolveConfig(name string, manifest *Manifest) map[string]string {
 	resolved := config.ResolveVarsMap(manifest.Config, m.pluginVars(manifest))
-	// Inject per-group credentials dir so plugins can find credential
-	// files (e.g., OAuth2 tokens). Uses underscore prefix to avoid
-	// collisions with plugin-declared config keys.
 	if m.cfg.CredentialsDir != "" && manifest.CredentialGroup != "" {
-		resolved["_credentials_dir"] = filepath.Join(
-			m.cfg.CredentialsDir, manifest.CredentialGroup)
+		credDir := filepath.Join(m.cfg.CredentialsDir, manifest.CredentialGroup)
+		if hasVaultFiles(credDir) {
+			shadowDir, err := m.buildShadowCredentialsDir(name, credDir)
+			if err != nil {
+				log.Printf("[%s] shadow dir failed, using original: %v", name, err)
+				resolved["_credentials_dir"] = credDir
+			} else {
+				resolved["_credentials_dir"] = shadowDir
+			}
+		} else {
+			resolved["_credentials_dir"] = credDir
+		}
 	}
-	// Inject work_dir so plugins can access the working directory
 	if m.workdir != "" {
 		resolved["_work_dir"] = m.workdir
 	}
 	return resolved
+}
+
+// hasVaultFiles reports whether any files in a directory start with
+// the Ansible Vault magic header. Only reads the first 15 bytes of
+// each file to avoid loading full credential file contents.
+func hasVaultFiles(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		f, err := os.Open(path) //nolint:gosec // credential dir from config
+		if err != nil {
+			continue
+		}
+		header := make([]byte, 15)
+		n, _ := f.Read(header)
+		_ = f.Close()
+		if vault.IsAnsibleVault(header[:n]) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildShadowCredentialsDir creates a per-plugin shadow directory
+// with symlinks to credential files. Encrypted files are decrypted
+// to inheritable securefiles; plaintext files are symlinked to the
+// originals. Token file writes follow the symlink back to the
+// original file.
+func (m *Manager) buildShadowCredentialsDir(pluginName, originalDir string) (string, error) {
+	base := os.Getenv("XDG_RUNTIME_DIR")
+	if base == "" {
+		var err error
+		base, err = os.MkdirTemp(os.TempDir(), "wtmcp-")
+		if err != nil {
+			return "", fmt.Errorf("create shadow base: %w", err)
+		}
+		m.secureTracker.TrackDirForPlugin(pluginName+"-base", base)
+	}
+
+	shadowDir := filepath.Join(base, "wtmcp-shadow", pluginName)
+	if info, err := os.Lstat(shadowDir); err == nil {
+		if info.Mode().Type()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("shadow dir %s is a symlink — refusing to remove", shadowDir)
+		}
+		_ = os.RemoveAll(shadowDir)
+	}
+	if err := os.MkdirAll(shadowDir, 0o700); err != nil {
+		return "", fmt.Errorf("create shadow dir: %w", err)
+	}
+	m.secureTracker.TrackDirForPlugin(pluginName, shadowDir)
+
+	entries, err := os.ReadDir(originalDir)
+	if err != nil {
+		return "", fmt.Errorf("read credentials dir: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		originalPath := filepath.Join(originalDir, entry.Name())
+		shadowPath := filepath.Join(shadowDir, entry.Name())
+
+		fi, err := entry.Info()
+		if err != nil || fi.Size() > 1<<20 {
+			continue
+		}
+		data, err := os.ReadFile(originalPath) //nolint:gosec // credential dir from config
+		if err != nil {
+			continue
+		}
+
+		if vault.IsAnsibleVault(data) {
+			sfPath, err := m.decryptCredentialToInheritable(pluginName, entry.Name(), data)
+			if err != nil {
+				log.Printf("[%s] shadow decrypt %s: %v", pluginName, entry.Name(), err)
+				continue
+			}
+			if err := os.Symlink(sfPath, shadowPath); err != nil {
+				return "", fmt.Errorf("symlink %s: %w", entry.Name(), err)
+			}
+		} else {
+			if err := os.Symlink(originalPath, shadowPath); err != nil {
+				return "", fmt.Errorf("symlink %s: %w", entry.Name(), err)
+			}
+		}
+	}
+
+	return shadowDir, nil
+}
+
+// decryptCredentialToInheritable decrypts vault data to an
+// inheritable securefile (no MFD_CLOEXEC) so plugin subprocesses
+// can read via /proc/self/fd/N.
+func (m *Manager) decryptCredentialToInheritable(pluginName, fileName string, data []byte) (string, error) {
+	if m.vaultPassword == nil {
+		return "", fmt.Errorf("encrypted credential file but no vault password configured")
+	}
+
+	header, err := vault.ParseHeader(strings.SplitN(string(data), "\n", 2)[0])
+	if err != nil {
+		return "", fmt.Errorf("invalid vault file format")
+	}
+
+	password, err := m.vaultPassword(header.VaultID)
+	if err != nil {
+		return "", err
+	}
+
+	plaintext, err := vault.Decrypt(data, password)
+	vault.ZeroBytes(password)
+	if err != nil {
+		return "", err
+	}
+
+	sf, err := securefile.Create(fileName)
+	if err != nil {
+		vault.ZeroBytes(plaintext)
+		return "", fmt.Errorf("create securefile: %w", err)
+	}
+	if err := sf.Write(plaintext); err != nil {
+		vault.ZeroBytes(plaintext)
+		_ = sf.Close()
+		return "", fmt.Errorf("write securefile: %w", err)
+	}
+	vault.ZeroBytes(plaintext)
+	m.secureTracker.TrackForPlugin(pluginName, sf)
+	return sf.Path(), nil
 }
 
 // Handle returns the handle for a loaded plugin, or nil if not loaded.
