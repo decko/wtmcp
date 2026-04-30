@@ -350,6 +350,47 @@ reload, so password rotations are picked up automatically.
   logging, or FIPS-validated crypto should use HashiCorp Vault or
   cloud KMS.
 
+### Credential File Encryption
+
+In addition to env.d files, credential files in
+`credentials/<group>/` can also be vault-encrypted. Supported
+files:
+
+- `client-credentials.json` (OAuth2 client credentials)
+- TLS `client_cert` and `client_key` PEM files
+
+Token files (`token-*.json`) are **not** encrypted — they are
+auto-rotated, short-lived, and derived from the client credentials.
+
+Encrypted credential files are decrypted to memory-backed file
+descriptors (memfd on Linux, unlinked tmpfile on macOS) so
+decrypted content never touches persistent storage. Plugins
+receive the same file paths as usual — no plugin changes needed.
+
+### wtmcpctl vault Commands
+
+Encrypt and decrypt files without requiring `ansible-vault`:
+
+```bash
+# Encrypt a file
+wtmcpctl vault encrypt env.d/jira.env
+
+# Encrypt with vault ID
+wtmcpctl vault encrypt --vault-id prod env.d/jira.env
+
+# Decrypt a file
+wtmcpctl vault decrypt env.d/jira.env
+
+# Verify decryption without writing
+wtmcpctl vault decrypt --check env.d/jira.env
+
+# View decrypted content without modifying the file
+wtmcpctl vault view env.d/jira.env
+```
+
+Password is sourced from `--vault-password-file`, `WTMCP_VAULT_PASSWORD`
+env var, config.yaml, or interactive prompt (with echo suppression).
+
 ## Included Plugins
 
 ### Google Plugins
