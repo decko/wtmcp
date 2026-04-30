@@ -470,9 +470,22 @@ func (m *Manager) preparePlugin(name string) (*Handle, error) {
 		log.Printf("[%s] loaded CA cert from %s", name, tlsCfg.CACert)
 	}
 
-	// Validate client key permissions
+	// Validate and optionally decrypt TLS client cert/key
+	if tlsCfg.ClientCert != "" {
+		if err := config.RejectSymlink(tlsCfg.ClientCert); err != nil {
+			return nil, fmt.Errorf("[%s] client_cert: %w", name, err)
+		}
+		decrypted, err := m.decryptCredentialIfVault(name, tlsCfg.ClientCert)
+		if err != nil {
+			return nil, fmt.Errorf("[%s] client_cert: %w", name, err)
+		}
+		tlsCfg.ClientCert = decrypted
+	}
 	if tlsCfg.ClientKey != "" {
-		info, err := os.Stat(tlsCfg.ClientKey)
+		if err := config.RejectSymlink(tlsCfg.ClientKey); err != nil {
+			return nil, fmt.Errorf("[%s] client_key: %w", name, err)
+		}
+		info, err := os.Lstat(tlsCfg.ClientKey)
 		if err != nil {
 			return nil, fmt.Errorf("[%s] stat client_key %s: %w", name, tlsCfg.ClientKey, err)
 		}
@@ -480,6 +493,11 @@ func (m *Manager) preparePlugin(name string) (*Handle, error) {
 			return nil, fmt.Errorf("[%s] client_key %s mode %04o, must not be group/other accessible",
 				name, tlsCfg.ClientKey, info.Mode().Perm())
 		}
+		decrypted, err := m.decryptCredentialIfVault(name, tlsCfg.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("[%s] client_key: %w", name, err)
+		}
+		tlsCfg.ClientKey = decrypted
 	}
 
 	pa := &proxy.PluginAuth{
@@ -726,8 +744,6 @@ func (m *Manager) sanitizeReason(reason string) string {
 // Ansible Vault encrypted, decrypts it to a securefile. Returns
 // the original path for plaintext files, or the securefile path
 // for encrypted files.
-//
-//nolint:unused // wired into preparePlugin for credential file decryption
 func (m *Manager) decryptCredentialIfVault(pluginName, path string) (string, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // path from resolved plugin config
 	if err != nil {

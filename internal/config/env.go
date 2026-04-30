@@ -159,7 +159,7 @@ const maxEnvFileSize = 1 << 20
 // symlinks, checks permissions, auto-detects Ansible Vault encrypted
 // files, and decrypts if a vault password is available.
 func loadEnvFile(path string, opts EnvLoadOptions) (map[string]string, error) {
-	if err := rejectSymlink(path); err != nil {
+	if err := RejectSymlink(path); err != nil {
 		return nil, err
 	}
 
@@ -215,16 +215,16 @@ func decryptAndParse(data []byte, opts EnvLoadOptions) (map[string]string, error
 	return result, parseErr
 }
 
-// rejectSymlink returns an error if path is a symbolic link.
+// RejectSymlink returns an error if path is a symbolic link.
 // Prevents credential injection via symlinks to attacker-controlled
-// files outside the env.d directory.
-func rejectSymlink(path string) error {
+// files outside the expected directory.
+func RejectSymlink(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("lstat %s: %w", path, err)
 	}
 	if info.Mode().Type()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symlink — env.d files must be regular files", path)
+		return fmt.Errorf("%s is a symlink — must be a regular file", path)
 	}
 	return nil
 }
