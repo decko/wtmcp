@@ -647,6 +647,12 @@ plugins can share a group — e.g., `google-calendar`, `google-drive`,
 and `google-gmail` all declare `credential_group: google` to share
 one `env.d/google.env` credential file.
 
+env.d files can be encrypted with Ansible Vault (`ansible-vault
+encrypt env.d/jira.env`). The server auto-detects encrypted files
+and decrypts them transparently — plugins receive plaintext
+credentials as usual. See the "Encrypted Credentials" section in
+README.md for setup details.
+
 Without `credential_group`, all `${VAR}` references resolve to empty
 strings and no env.d vars are passed to the handler.
 

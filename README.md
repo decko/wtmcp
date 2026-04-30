@@ -42,6 +42,8 @@ proxying, caching, and output encoding so plugins stay minimal.
 - **Progressive discovery**: Tools default to deferred; only primary
   tools are loaded into model context. Deferred tools are
   discoverable via `tool_search` and called directly through MCP
+- **Encrypted credentials**: Ansible Vault encrypted env.d files,
+  auto-detected and decrypted transparently at startup
 
 ## Building and Running
 
@@ -225,6 +227,128 @@ MCP clients are automatically notified when tools or resources change.
 ### OAuth Plugin Management
 
 Plugin authentication (particularly for OAuth-enabled plugins) is managed through the `wtmcpctl` command-line utility. See [README-wtmcpctl.md](README-wtmcpctl.md) for usage instructions and setup.
+
+## Encrypted Credentials
+
+env.d files can be encrypted with [Ansible Vault](https://docs.ansible.com/ansible/latest/vault_guide/)
+for at-rest protection. The server auto-detects encrypted files by
+magic header and decrypts them transparently at startup. Plugins
+receive plaintext credentials as usual — no plugin changes needed.
+
+### Quick Start
+
+```bash
+# Create a vault password file (umask prevents brief permission race)
+(umask 077 && openssl rand -base64 32 > ~/.vault-pass)
+
+# Tell wtmcp where the password file is
+# (add to ~/.config/wtmcp/config.yaml)
+#   secrets:
+#     vault_password_file: ~/.vault-pass
+
+# Encrypt an env.d file
+ansible-vault encrypt --vault-password-file ~/.vault-pass \
+    ~/.config/wtmcp/env.d/jira.env
+
+# Start the server — decrypts automatically
+wtmcp
+```
+
+Encrypted files can be safely committed to git, shared, or backed
+up. Anyone who obtains them still needs the vault password to
+decrypt.
+
+### Password Sources
+
+The vault password is resolved in priority order:
+
+1. `WTMCP_VAULT_PASSWORD` environment variable (CI/CD convenience)
+2. `WTMCP_VAULT_PASSWORD_FILE` environment variable (path to file)
+3. `secrets.vault_password_file` in config.yaml (recommended)
+
+For production and workstations, prefer file-based passwords. Env
+vars are intended for CI/CD pipelines where mounting a file is
+inconvenient.
+
+### Multi-Password Support (Vault IDs)
+
+Ansible Vault 1.2 supports labeled passwords (vault IDs). Different
+env.d files can use different passwords:
+
+```bash
+# Encrypt with a vault ID label
+ansible-vault encrypt --vault-id prod@~/.vault-pass-prod \
+    ~/.config/wtmcp/env.d/jira.env
+```
+
+Configure per-ID password files in config.yaml:
+
+```yaml
+secrets:
+  vault_password_file: ~/.vault-pass          # default
+  vault_ids:
+    prod: ~/.vault-pass-prod
+    dev: ~/.vault-pass-dev
+```
+
+Per-ID env vars are also supported: `WTMCP_VAULT_PASSWORD_PROD`,
+`WTMCP_VAULT_PASSWORD_DEV`.
+
+If no per-ID password is found, the server falls back to the
+default password chain automatically.
+
+### Diagnostics
+
+```bash
+wtmcp check
+```
+
+Reports vault password status and per-group encryption details
+(only encrypted groups are shown):
+
+```
+vault password: file (~/.vault-pass)
+  - jira (encrypted, vault 1.1, decryption ok)
+  - snyk (encrypted, vault 1.2 id=prod, decryption failed)
+```
+
+### Migrating Existing Files
+
+1. Create a vault password file (see Quick Start)
+2. Configure `secrets.vault_password_file` in config.yaml
+3. Encrypt one env.d file:
+   `ansible-vault encrypt --vault-password-file ~/.vault-pass env.d/jira.env`
+4. Verify: `wtmcp check` should show "decryption ok"
+5. Repeat for remaining files
+6. Optionally commit encrypted files to git
+
+A single env.d directory can mix plaintext and encrypted files.
+Migrate incrementally — one file at a time.
+
+If env.d files were previously committed in plaintext, encrypting
+them does not remove the plaintext from git history. Rotate the
+affected credentials after migrating and consider using
+`git filter-repo` to remove the old plaintext from history.
+
+### Reloading Encrypted Credentials
+
+Credential changes take effect on `plugin_reload` without a server
+restart. The vault password is re-read from its source on each
+reload, so password rotations are picked up automatically.
+
+### Security Notes
+
+- Ansible Vault uses AES-256-CTR with PBKDF2-SHA256 (10,000
+  iterations). Use strong passwords (20+ characters or
+  `openssl rand -base64 32`) to compensate for the low iteration
+  count.
+- **Back up your vault password file.** Losing it means permanent
+  loss of access to encrypted credentials. Store a copy in a
+  separate secure location.
+- Ansible Vault is a practical improvement for development and
+  CI/CD. Regulated environments requiring key rotation, audit
+  logging, or FIPS-validated crypto should use HashiCorp Vault or
+  cloud KMS.
 
 ## Included Plugins
 
