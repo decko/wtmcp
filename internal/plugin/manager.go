@@ -19,6 +19,8 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/config"
 	"github.com/LeGambiArt/wtmcp/internal/protocol"
 	"github.com/LeGambiArt/wtmcp/internal/proxy"
+	"github.com/LeGambiArt/wtmcp/internal/secrets/securefile"
+	"github.com/LeGambiArt/wtmcp/internal/secrets/vault"
 )
 
 // DisabledPlugin records a plugin that was discovered but could not
@@ -44,6 +46,8 @@ type Manager struct {
 	workdir        string
 	envDir         string
 	envLoadOpts    config.EnvLoadOptions
+	vaultPassword  func(vaultID string) ([]byte, error)
+	secureTracker  *securefile.Tracker
 	authReg        *auth.Registry
 	proxy          *proxy.Proxy
 	cache          cache.Store
@@ -79,6 +83,8 @@ func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *conf
 		workdir:        workdir,
 		envDir:         envDir,
 		envLoadOpts:    envLoadOpts,
+		vaultPassword:  envLoadOpts.VaultPassword,
+		secureTracker:  securefile.NewTracker(),
 		authReg:        authReg,
 		proxy:          p,
 		cache:          c,
@@ -604,6 +610,7 @@ func (m *Manager) Reload(ctx context.Context, name string) error {
 			return err
 		}
 	}
+	m.secureTracker.ClosePlugin(name)
 	if err := m.Load(ctx, name); err != nil {
 		m.disablePlugin(name, err.Error())
 		return err
@@ -625,6 +632,7 @@ func (m *Manager) ShutdownAll(ctx context.Context) {
 			log.Printf("error stopping %s: %v", name, err)
 		}
 	}
+	m.secureTracker.CloseAll()
 }
 
 // CallTool dispatches a tool call to the appropriate plugin.
@@ -703,12 +711,64 @@ func (m *Manager) sanitizeReason(reason string) string {
 	if m.cfg == nil {
 		return reason
 	}
+	if m.cfg.CredentialsDir != "" {
+		reason = strings.ReplaceAll(reason, m.cfg.CredentialsDir+"/", "credentials/")
+	}
 	for _, path := range m.cfg.Secrets.VaultIDs {
 		if path != "" {
 			reason = strings.ReplaceAll(reason, path, "<vault-password-file>")
 		}
 	}
 	return reason
+}
+
+// decryptCredentialIfVault reads a credential file and, if it is
+// Ansible Vault encrypted, decrypts it to a securefile. Returns
+// the original path for plaintext files, or the securefile path
+// for encrypted files.
+//
+//nolint:unused // wired into preparePlugin for credential file decryption
+func (m *Manager) decryptCredentialIfVault(pluginName, path string) (string, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // path from resolved plugin config
+	if err != nil {
+		return "", err
+	}
+	if !vault.IsAnsibleVault(data) {
+		return path, nil
+	}
+	if m.vaultPassword == nil {
+		return "", fmt.Errorf("encrypted credential file but no vault password configured")
+	}
+
+	header, err := vault.ParseHeader(strings.SplitN(string(data), "\n", 2)[0])
+	if err != nil {
+		return "", fmt.Errorf("invalid vault file format")
+	}
+
+	password, err := m.vaultPassword(header.VaultID)
+	if err != nil {
+		return "", err
+	}
+
+	plaintext, err := vault.Decrypt(data, password)
+	vault.ZeroBytes(password)
+	if err != nil {
+		return "", err
+	}
+
+	sf, err := securefile.CreateCloexec(filepath.Base(path))
+	if err != nil {
+		vault.ZeroBytes(plaintext)
+		return "", fmt.Errorf("create securefile: %w", err)
+	}
+	if err := sf.Write(plaintext); err != nil {
+		vault.ZeroBytes(plaintext)
+		_ = sf.Close()
+		return "", fmt.Errorf("write securefile: %w", err)
+	}
+	vault.ZeroBytes(plaintext)
+	m.secureTracker.TrackForPlugin(pluginName, sf)
+	return sf.Path(), nil
 }
 
 // ConfigDisabledPlugins returns plugins that were skipped during
