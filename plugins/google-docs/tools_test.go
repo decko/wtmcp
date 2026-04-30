@@ -606,6 +606,165 @@ func TestParseSimpleFormattingDepthLimit(t *testing.T) {
 	})
 }
 
+func TestIntraWordEmphasis(t *testing.T) {
+	hasFormatting := func(segments []markdownSegment, field string) bool {
+		for _, seg := range segments {
+			switch field {
+			case "italic":
+				if seg.italic {
+					return true
+				}
+			case "bold":
+				if seg.bold {
+					return true
+				}
+			case "underline":
+				if seg.underline {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	allText := func(segments []markdownSegment) string {
+		var s string
+		for _, seg := range segments {
+			s += seg.text
+		}
+		return s
+	}
+
+	// Underscore italic — intra-word cases (should be literal)
+	t.Run("WTMCP_FOO_BAR is literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("WTMCP_FOO_BAR")
+		if hasFormatting(segs, "italic") {
+			t.Error("intra-word underscores should not produce italic")
+		}
+		if allText(segs) != "WTMCP_FOO_BAR" {
+			t.Errorf("got %q, want WTMCP_FOO_BAR", allText(segs))
+		}
+	})
+
+	t.Run("foo_bar_baz is literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("foo_bar_baz")
+		if hasFormatting(segs, "italic") {
+			t.Error("intra-word underscores should not produce italic")
+		}
+	})
+
+	t.Run("foo_bar unpaired is literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("foo_bar")
+		if hasFormatting(segs, "italic") {
+			t.Error("unpaired underscore should not produce italic")
+		}
+		if allText(segs) != "foo_bar" {
+			t.Errorf("got %q, want foo_bar", allText(segs))
+		}
+	})
+
+	t.Run("a_b_c_d_e is literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("a_b_c_d_e")
+		if hasFormatting(segs, "italic") {
+			t.Error("multiple intra-word underscores should not produce italic")
+		}
+	})
+
+	t.Run("_foo_bar_ is literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("_foo_bar_")
+		if allText(segs) != "_foo_bar_" {
+			t.Errorf("got %q, want _foo_bar_", allText(segs))
+		}
+	})
+
+	// Underscore italic — boundary cases (should produce italic)
+	t.Run("_italic_ alone is italic", func(t *testing.T) {
+		segs := parseSimpleFormatting("_italic_")
+		if !hasFormatting(segs, "italic") {
+			t.Error("standalone _italic_ should produce italic")
+		}
+	})
+
+	t.Run("hello _world_ end is italic", func(t *testing.T) {
+		segs := parseSimpleFormatting("hello _world_ end")
+		if !hasFormatting(segs, "italic") {
+			t.Error("_world_ with whitespace boundaries should produce italic")
+		}
+	})
+
+	t.Run("(_italic_) with punctuation is italic", func(t *testing.T) {
+		segs := parseSimpleFormatting("(_italic_)")
+		if !hasFormatting(segs, "italic") {
+			t.Error("_italic_ with punctuation boundaries should produce italic")
+		}
+	})
+
+	// Asterisk italic — intra-word cases
+	t.Run("a*b*c is literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("a*b*c")
+		if hasFormatting(segs, "italic") {
+			t.Error("intra-word asterisks should not produce italic")
+		}
+		if allText(segs) != "a*b*c" {
+			t.Errorf("got %q, want a*b*c", allText(segs))
+		}
+	})
+
+	t.Run("*italic* alone is italic", func(t *testing.T) {
+		segs := parseSimpleFormatting("*italic*")
+		if !hasFormatting(segs, "italic") {
+			t.Error("standalone *italic* should produce italic")
+		}
+	})
+
+	t.Run("hello *world* end is italic", func(t *testing.T) {
+		segs := parseSimpleFormatting("hello *world* end")
+		if !hasFormatting(segs, "italic") {
+			t.Error("*world* with whitespace boundaries should produce italic")
+		}
+	})
+
+	// Double-asterisk bold — intra-word cases
+	t.Run("a**b**c is literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("a**b**c")
+		if hasFormatting(segs, "bold") {
+			t.Error("intra-word double asterisks should not produce bold")
+		}
+	})
+
+	t.Run("**bold** alone is bold", func(t *testing.T) {
+		segs := parseSimpleFormatting("**bold**")
+		if !hasFormatting(segs, "bold") {
+			t.Error("standalone **bold** should produce bold")
+		}
+	})
+
+	// Double-underscore underline — intra-word cases
+	t.Run("A__init__B is literal", func(t *testing.T) {
+		segs := parseSimpleFormatting("A__init__B")
+		if hasFormatting(segs, "underline") {
+			t.Error("intra-word double underscores should not produce underline")
+		}
+		if allText(segs) != "A__init__B" {
+			t.Errorf("got %q, want A__init__B", allText(segs))
+		}
+	})
+
+	t.Run("__init__ alone is underline", func(t *testing.T) {
+		segs := parseSimpleFormatting("__init__")
+		if !hasFormatting(segs, "underline") {
+			t.Error("standalone __init__ should produce underline")
+		}
+	})
+
+	t.Run("hello __world__ end is underline", func(t *testing.T) {
+		segs := parseSimpleFormatting("hello __world__ end")
+		if !hasFormatting(segs, "underline") {
+			t.Error("__world__ with whitespace boundaries should produce underline")
+		}
+	})
+}
+
 func TestLinkSchemeValidation(t *testing.T) {
 	t.Run("https allowed", func(t *testing.T) {
 		segments := parseSimpleFormatting("[ok](https://example.com)")

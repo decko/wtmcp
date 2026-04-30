@@ -1164,6 +1164,14 @@ func splitTableRow(line string) []string {
 	return cells
 }
 
+// isWordChar reports whether b is an ASCII alphanumeric character.
+// Used for emphasis word-boundary checks: intra-word delimiters
+// (e.g., WTMCP_FOO_BAR) are treated as literal per CommonMark rules.
+func isWordChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9')
+}
+
 // parseSimpleFormatting parses bold, italic, underline, and strikethrough formatting.
 func parseSimpleFormatting(text string) []markdownSegment {
 	return parseSimpleFormattingWithDepth(text, 0)
@@ -1215,9 +1223,19 @@ func parseSimpleFormattingWithDepth(text string, depth int) []markdownSegment {
 
 		// Check for **bold**
 		if strings.HasPrefix(text[pos:], "**") {
+			if pos > 0 && isWordChar(text[pos-1]) {
+				segments = append(segments, markdownSegment{text: "**"})
+				pos += 2
+				continue
+			}
 			endPos := strings.Index(text[pos+2:], "**")
 			if endPos != -1 {
 				endPos += pos + 2
+				if endPos+2 < len(text) && isWordChar(text[endPos+2]) {
+					segments = append(segments, markdownSegment{text: text[pos : pos+1]})
+					pos++
+					continue
+				}
 				innerSegs := parseSimpleFormattingWithDepth(text[pos+2:endPos], depth+1)
 				for i := range innerSegs {
 					innerSegs[i].bold = true
@@ -1230,9 +1248,19 @@ func parseSimpleFormattingWithDepth(text string, depth int) []markdownSegment {
 
 		// Check for __underline__
 		if strings.HasPrefix(text[pos:], "__") {
+			if pos > 0 && isWordChar(text[pos-1]) {
+				segments = append(segments, markdownSegment{text: "__"})
+				pos += 2
+				continue
+			}
 			endPos := strings.Index(text[pos+2:], "__")
 			if endPos != -1 {
 				endPos += pos + 2
+				if endPos+2 < len(text) && isWordChar(text[endPos+2]) {
+					segments = append(segments, markdownSegment{text: text[pos : pos+1]})
+					pos++
+					continue
+				}
 				innerSegs := parseSimpleFormattingWithDepth(text[pos+2:endPos], depth+1)
 				for i := range innerSegs {
 					innerSegs[i].underline = true
@@ -1245,11 +1273,21 @@ func parseSimpleFormattingWithDepth(text string, depth int) []markdownSegment {
 
 		// Check for *italic*
 		if strings.HasPrefix(text[pos:], "*") && !strings.HasPrefix(text[pos:], "**") {
+			if pos > 0 && isWordChar(text[pos-1]) {
+				segments = append(segments, markdownSegment{text: text[pos : pos+1]})
+				pos++
+				continue
+			}
 			endPos := strings.Index(text[pos+1:], "*")
 			if endPos != -1 {
 				endPos += pos + 1
 				// Make sure it's not part of **
 				if endPos+1 < len(text) && text[endPos+1] == '*' {
+					segments = append(segments, markdownSegment{text: text[pos : pos+1]})
+					pos++
+					continue
+				}
+				if endPos+1 < len(text) && isWordChar(text[endPos+1]) {
 					segments = append(segments, markdownSegment{text: text[pos : pos+1]})
 					pos++
 					continue
@@ -1266,11 +1304,21 @@ func parseSimpleFormattingWithDepth(text string, depth int) []markdownSegment {
 
 		// Check for _italic_ (single underscore, not double)
 		if strings.HasPrefix(text[pos:], "_") && !strings.HasPrefix(text[pos:], "__") {
+			if pos > 0 && isWordChar(text[pos-1]) {
+				segments = append(segments, markdownSegment{text: text[pos : pos+1]})
+				pos++
+				continue
+			}
 			endPos := strings.Index(text[pos+1:], "_")
 			if endPos != -1 {
 				endPos += pos + 1
 				// Make sure it's not part of __
 				if endPos+1 < len(text) && text[endPos+1] == '_' {
+					segments = append(segments, markdownSegment{text: text[pos : pos+1]})
+					pos++
+					continue
+				}
+				if endPos+1 < len(text) && isWordChar(text[endPos+1]) {
 					segments = append(segments, markdownSegment{text: text[pos : pos+1]})
 					pos++
 					continue
