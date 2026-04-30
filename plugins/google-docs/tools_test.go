@@ -4173,6 +4173,229 @@ func TestPipeEscaping(t *testing.T) {
 	})
 }
 
+func TestCollectTableCellRequests(t *testing.T) {
+	mkAPIRows := func(indices ...[]int64) []*docs.TableRow {
+		var rows []*docs.TableRow
+		for _, rowIndices := range indices {
+			var cells []*docs.TableCell
+			for _, idx := range rowIndices {
+				cells = append(cells, &docs.TableCell{
+					Content: []*docs.StructuralElement{{StartIndex: idx}},
+				})
+			}
+			rows = append(rows, &docs.TableRow{TableCells: cells})
+		}
+		return rows
+	}
+
+	t.Run("reverse iteration order 2x2", func(t *testing.T) {
+		apiRows := mkAPIRows([]int64{5, 10}, []int64{20, 25})
+		parsedRows := []tableRow{
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "A"}}},
+				{segments: []markdownSegment{{text: "B"}}},
+			}},
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "C"}}},
+				{segments: []markdownSegment{{text: "D"}}},
+			}},
+		}
+
+		reqs := collectTableCellRequests(apiRows, parsedRows)
+
+		var insertIndices []int64
+		for _, r := range reqs {
+			if r.InsertText != nil {
+				insertIndices = append(insertIndices, r.InsertText.Location.Index)
+			}
+		}
+		if len(insertIndices) != 4 {
+			t.Fatalf("expected 4 InsertText requests, got %d", len(insertIndices))
+		}
+		// Must be strictly decreasing (reverse document order)
+		for i := 1; i < len(insertIndices); i++ {
+			if insertIndices[i] >= insertIndices[i-1] {
+				t.Errorf("not in reverse order: index[%d]=%d >= index[%d]=%d",
+					i, insertIndices[i], i-1, insertIndices[i-1])
+			}
+		}
+	})
+
+	t.Run("empty cells produce no requests", func(t *testing.T) {
+		apiRows := mkAPIRows([]int64{5, 10})
+		parsedRows := []tableRow{
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "A"}}},
+				{segments: []markdownSegment{}},
+			}},
+		}
+
+		reqs := collectTableCellRequests(apiRows, parsedRows)
+
+		for _, r := range reqs {
+			if r.InsertText != nil && r.InsertText.Location.Index == 10 {
+				t.Error("empty cell should not produce InsertText requests")
+			}
+		}
+		// Should only have requests for cell(0,0)
+		if len(reqs) != 1 {
+			t.Errorf("expected 1 request (text only), got %d", len(reqs))
+		}
+	})
+
+	t.Run("all-empty table produces zero requests", func(t *testing.T) {
+		apiRows := mkAPIRows([]int64{5, 10}, []int64{20, 25})
+		parsedRows := []tableRow{
+			{cells: []tableCell{
+				{segments: []markdownSegment{}},
+				{segments: []markdownSegment{}},
+			}},
+			{cells: []tableCell{
+				{segments: []markdownSegment{}},
+				{segments: []markdownSegment{}},
+			}},
+		}
+
+		reqs := collectTableCellRequests(apiRows, parsedRows)
+		if len(reqs) != 0 {
+			t.Errorf("expected 0 requests for all-empty table, got %d", len(reqs))
+		}
+	})
+
+	t.Run("single cell table", func(t *testing.T) {
+		apiRows := mkAPIRows([]int64{5})
+		parsedRows := []tableRow{
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "only"}}},
+			}},
+		}
+
+		reqs := collectTableCellRequests(apiRows, parsedRows)
+		if len(reqs) == 0 {
+			t.Fatal("expected requests for single-cell table")
+		}
+		if reqs[0].InsertText == nil || reqs[0].InsertText.Text != "only" {
+			t.Error("expected InsertText with 'only'")
+		}
+	})
+
+	t.Run("mixed content types text and date chip", func(t *testing.T) {
+		apiRows := mkAPIRows([]int64{5, 15})
+		parsedRows := []tableRow{
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "hello", bold: true}}},
+				{segments: []markdownSegment{{isDateField: true, dateValue: "2026-01-01"}}},
+			}},
+		}
+
+		reqs := collectTableCellRequests(apiRows, parsedRows)
+
+		// Date chip cell (index 15) should come before text cell (index 5)
+		var firstDateIdx, firstTextIdx int
+		for i, r := range reqs {
+			if r.InsertDate != nil && firstDateIdx == 0 {
+				firstDateIdx = i + 1
+			}
+			if r.InsertText != nil && firstTextIdx == 0 {
+				firstTextIdx = i + 1
+			}
+		}
+		if firstDateIdx == 0 {
+			t.Fatal("expected InsertDate request")
+		}
+		if firstTextIdx == 0 {
+			t.Fatal("expected InsertText request")
+		}
+		if firstDateIdx > firstTextIdx {
+			t.Error("date chip (higher index) should appear before text (lower index)")
+		}
+	})
+
+	t.Run("dimension mismatch fewer API rows", func(t *testing.T) {
+		apiRows := mkAPIRows([]int64{5, 10})
+		parsedRows := []tableRow{
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "A"}}},
+				{segments: []markdownSegment{{text: "B"}}},
+			}},
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "C"}}},
+				{segments: []markdownSegment{{text: "D"}}},
+			}},
+		}
+
+		// Should not panic — row 1 is silently skipped
+		reqs := collectTableCellRequests(apiRows, parsedRows)
+
+		// Only row 0 should produce requests
+		for _, r := range reqs {
+			if r.InsertText != nil {
+				idx := r.InsertText.Location.Index
+				if idx != 5 && idx != 10 {
+					t.Errorf("unexpected InsertText at index %d (expected 5 or 10)", idx)
+				}
+			}
+		}
+	})
+
+	t.Run("multi-segment cell preserves intra-cell order", func(t *testing.T) {
+		apiRows := mkAPIRows([]int64{5})
+		parsedRows := []tableRow{
+			{cells: []tableCell{
+				{segments: []markdownSegment{
+					{text: "bold", bold: true},
+					{text: " and "},
+					{text: "italic", italic: true},
+				}},
+			}},
+		}
+
+		reqs := collectTableCellRequests(apiRows, parsedRows)
+
+		// Verify InsertText comes before UpdateTextStyle for each segment
+		for i, r := range reqs {
+			if r.UpdateTextStyle == nil {
+				continue
+			}
+			found := false
+			for j := 0; j < i; j++ {
+				if reqs[j].InsertText != nil &&
+					reqs[j].InsertText.Location.Index == r.UpdateTextStyle.Range.StartIndex {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("UpdateTextStyle at position %d has no preceding InsertText for range start %d",
+					i, r.UpdateTextStyle.Range.StartIndex)
+			}
+		}
+	})
+
+	t.Run("cell with empty Content slice is skipped", func(t *testing.T) {
+		apiRows := []*docs.TableRow{
+			{TableCells: []*docs.TableCell{
+				{Content: []*docs.StructuralElement{}},
+				{Content: []*docs.StructuralElement{{StartIndex: 10}}},
+			}},
+		}
+		parsedRows := []tableRow{
+			{cells: []tableCell{
+				{segments: []markdownSegment{{text: "A"}}},
+				{segments: []markdownSegment{{text: "B"}}},
+			}},
+		}
+
+		reqs := collectTableCellRequests(apiRows, parsedRows)
+
+		for _, r := range reqs {
+			if r.InsertText != nil && r.InsertText.Text == "A" {
+				t.Error("cell with empty Content should be skipped")
+			}
+		}
+	})
+}
+
 func TestConvertTableToRequests(t *testing.T) {
 	table := &tableSegment{
 		numColumns: 2,
