@@ -535,7 +535,7 @@ func (m *Manager) preparePlugin(name string) (*Handle, error) {
 		log.Printf("[%s] using TLS client (ca=%v, mtls=%v, skip_hostname=%v)",
 			name, pa.TLS.CACert != "", pa.TLS.ClientCert != "", pa.TLS.SkipHostnameVerify)
 	default:
-		pa.Provider = m.resolveAuth(manifest)
+		pa.Provider = m.resolveAuth(name, manifest)
 	}
 
 	// IMPORTANT: RegisterPlugin is a plain map write — it must be called
@@ -904,7 +904,7 @@ func (m *Manager) checkDisabledProvider(manifest *Manifest) string {
 	return "all auth variants use disabled providers"
 }
 
-func (m *Manager) resolveAuth(manifest *Manifest) auth.Provider {
+func (m *Manager) resolveAuth(pluginName string, manifest *Manifest) auth.Provider {
 	authCfg := manifest.Services.Auth
 	if authCfg.Type == "" && len(authCfg.Variants) == 0 {
 		return nil
@@ -912,6 +912,18 @@ func (m *Manager) resolveAuth(manifest *Manifest) auth.Provider {
 
 	vars := m.pluginVars(manifest)
 	resolve := func(s string) string { return config.ResolveVars(s, vars) }
+
+	decryptCredFile := func(path string) string {
+		if path == "" {
+			return ""
+		}
+		decrypted, err := m.decryptCredentialIfVault(pluginName, path)
+		if err != nil {
+			log.Printf("[%s] credential file decrypt: %v", pluginName, err)
+			return path
+		}
+		return decrypted
+	}
 
 	var variantCfg auth.VariantConfig
 	if len(authCfg.Variants) > 0 {
@@ -937,7 +949,7 @@ func (m *Manager) resolveAuth(manifest *Manifest) auth.Provider {
 				Password:        resolve(v.Password),
 				SPN:             resolve(v.SPN),
 				Scopes:          v.Scopes,
-				CredentialsFile: resolve(v.CredentialsFile),
+				CredentialsFile: decryptCredFile(resolve(v.CredentialsFile)),
 				TokenFile:       resolve(v.TokenFile),
 				CredentialsDir:  m.cfg.CredentialsDir,
 				TokenURL:        resolve(v.TokenURL),
@@ -959,7 +971,7 @@ func (m *Manager) resolveAuth(manifest *Manifest) auth.Provider {
 				Password:        resolve(authCfg.Password),
 				SPN:             resolve(authCfg.SPN),
 				Scopes:          authCfg.Scopes,
-				CredentialsFile: resolve(authCfg.CredentialsFile),
+				CredentialsFile: decryptCredFile(resolve(authCfg.CredentialsFile)),
 				TokenFile:       resolve(authCfg.TokenFile),
 				CredentialsDir:  m.cfg.CredentialsDir,
 				TokenURL:        resolve(authCfg.TokenURL),
