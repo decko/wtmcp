@@ -74,7 +74,7 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 	}
 
 	// Create manager with nil dependencies (discovery only)
-	mgr := NewManager(nil, nil, nil, cfg, envResult.Groups, envResult.Errors, envResult.DirError, workdir, envDir, envOpts)
+	mgr := NewManager(nil, nil, nil, cfg, envResult.Groups, envResult.Errors, envResult.DirError, workdir, envDir, envOpts, "")
 
 	// Discover plugins (without loading/starting them)
 	if err := mgr.Discover(cfg.PluginDirs, cfg.UserPluginDir); err != nil {

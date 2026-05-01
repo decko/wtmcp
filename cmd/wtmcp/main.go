@@ -107,6 +107,18 @@ func main() {
 }
 
 func run() error {
+	// Capture the caller's CWD for file I/O before anything changes it.
+	sessionDir, err := os.Getwd()
+	if err != nil || !filepath.IsAbs(sessionDir) {
+		log.Printf("WARNING: could not determine session directory: %v", err)
+		log.Printf("WARNING: file I/O operations (file_path, save_to_file) will be unavailable")
+		sessionDir = ""
+	} else if sessionDir == "/" || strings.Count(filepath.Clean(sessionDir), string(os.PathSeparator)) < 2 {
+		log.Printf("WARNING: session directory %q is too broad for file confinement", sessionDir)
+		log.Printf("WARNING: file I/O operations will be unavailable — start wtmcp from a project directory")
+		sessionDir = ""
+	}
+
 	// Resolve workdir
 	wd := config.WorkDir()
 	if workdir != "" {
@@ -177,7 +189,7 @@ func run() error {
 	cacheStore := cache.NewMemoryStore()
 	httpProxy := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
 
-	mgr := plugin.NewManager(authReg, httpProxy, cacheStore, cfg, envResult.Groups, envResult.Errors, envResult.DirError, wd, envDir, envOpts)
+	mgr := plugin.NewManager(authReg, httpProxy, cacheStore, cfg, envResult.Groups, envResult.Errors, envResult.DirError, wd, envDir, envOpts, sessionDir)
 
 	if err := mgr.Discover(cfg.PluginDirs, cfg.UserPluginDir); err != nil {
 		return fmt.Errorf("plugin discovery: %w", err)

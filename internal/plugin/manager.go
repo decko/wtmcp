@@ -44,6 +44,7 @@ type Manager struct {
 	envErrors      map[string]string // credential group → error message
 	envDirError    string            // env.d directory-level error
 	workdir        string
+	sessionDir     string
 	envDir         string
 	envLoadOpts    config.EnvLoadOptions
 	vaultPassword  func(vaultID string) ([]byte, error)
@@ -65,7 +66,7 @@ type Manager struct {
 // permissions, stat failure) — all credential-dependent plugins
 // will be disabled. envDir is the resolved env.d directory path
 // used to re-read env files on plugin reload.
-func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *config.Config, envGroups config.EnvGroups, envErrors map[string]string, envDirError, workdir, envDir string, envLoadOpts config.EnvLoadOptions) *Manager {
+func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *config.Config, envGroups config.EnvGroups, envErrors map[string]string, envDirError, workdir, envDir string, envLoadOpts config.EnvLoadOptions, sessionDir string) *Manager {
 	if envGroups == nil {
 		envGroups = make(config.EnvGroups)
 	}
@@ -81,6 +82,7 @@ func NewManager(authReg *auth.Registry, p *proxy.Proxy, c cache.Store, cfg *conf
 		envErrors:      envErrors,
 		envDirError:    envDirError,
 		workdir:        workdir,
+		sessionDir:     sessionDir,
 		envDir:         envDir,
 		envLoadOpts:    envLoadOpts,
 		vaultPassword:  envLoadOpts.VaultPassword,
@@ -845,6 +847,10 @@ func (m *Manager) resolveConfig(name string, manifest *Manifest) map[string]stri
 	}
 	if m.workdir != "" {
 		resolved["_work_dir"] = m.workdir
+	}
+	if m.sessionDir != "" {
+		resolved["_session_dir"] = m.sessionDir
+		resolved["_output_dir"] = filepath.Join(m.sessionDir, "wtmcp", name)
 	}
 	return resolved
 }
