@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -79,6 +80,79 @@ func TestBuildProfileWritePaths(t *testing.T) {
 	}
 	if profile.WritePaths[1] != dataDir {
 		t.Errorf("WritePaths[1] = %q, want %q", profile.WritePaths[1], dataDir)
+	}
+}
+
+func TestBuildProfileSessionDir(t *testing.T) {
+	m := &Manager{cfg: testConfig(), dataDir: "/data"}
+
+	t.Run("included when set", func(t *testing.T) {
+		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler", SessionDir: "/home/user/project"}
+		profile := m.BuildProfile(info)
+		found := false
+		for _, p := range profile.ReadPaths {
+			if p == "/home/user/project" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("ReadPaths should include sessionDir, got %v", profile.ReadPaths)
+		}
+	})
+
+	t.Run("excluded when empty", func(t *testing.T) {
+		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler"}
+		profile := m.BuildProfile(info)
+		for _, p := range profile.ReadPaths {
+			if p == "" {
+				t.Error("ReadPaths should not contain empty string")
+			}
+		}
+	})
+}
+
+func TestBuildProfileOutputDir(t *testing.T) {
+	m := &Manager{cfg: testConfig(), dataDir: "/data"}
+
+	t.Run("included when set", func(t *testing.T) {
+		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler", OutputDir: "/home/user/project/wtmcp/test"}
+		profile := m.BuildProfile(info)
+		if len(profile.WritePaths) != 3 {
+			t.Fatalf("WritePaths = %v, want 3 entries (tmp + data + output)", profile.WritePaths)
+		}
+		if profile.WritePaths[2] != "/home/user/project/wtmcp/test" {
+			t.Errorf("WritePaths[2] = %q, want outputDir", profile.WritePaths[2])
+		}
+	})
+
+	t.Run("excluded when empty", func(t *testing.T) {
+		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler"}
+		profile := m.BuildProfile(info)
+		if len(profile.WritePaths) != 2 {
+			t.Fatalf("WritePaths = %v, want 2 entries (tmp + data only)", profile.WritePaths)
+		}
+	})
+}
+
+func TestPrepareDirsOutputDir(t *testing.T) {
+	tmpBase := t.TempDir()
+	dataBase := t.TempDir()
+	outDir := filepath.Join(t.TempDir(), "wtmcp", "test-plugin")
+
+	t.Setenv("TMPDIR", tmpBase)
+
+	m := &Manager{cfg: testConfig(), dataDir: dataBase}
+	_, _, err := m.PrepareDirs(PluginInfo{Name: "test-plugin", OutputDir: outDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(outDir); os.IsNotExist(err) {
+		t.Errorf("outputDir not created: %s", outDir)
+	}
+	info, _ := os.Stat(outDir)
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Errorf("outputDir permissions = %o, want 0700", perm)
 	}
 }
 
@@ -166,7 +240,7 @@ func TestPrepareDirs(t *testing.T) {
 	t.Setenv("TMPDIR", tmpBase)
 
 	m := &Manager{cfg: testConfig(), dataDir: dataBase}
-	tmpDir, dataDir, err := m.PrepareDirs("test-plugin")
+	tmpDir, dataDir, err := m.PrepareDirs(PluginInfo{Name: "test-plugin"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +263,7 @@ func TestCleanupTmpDir(t *testing.T) {
 	t.Setenv("TMPDIR", tmpBase)
 
 	m := &Manager{cfg: testConfig(), dataDir: t.TempDir()}
-	_, _, err := m.PrepareDirs("cleanup-test")
+	_, _, err := m.PrepareDirs(PluginInfo{Name: "cleanup-test"})
 	if err != nil {
 		t.Fatal(err)
 	}

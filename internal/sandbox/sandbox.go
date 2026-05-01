@@ -28,6 +28,8 @@ type PluginInfo struct {
 	Dir             string
 	Handler         string
 	CredentialGroup string
+	SessionDir      string // User's project directory (read access)
+	OutputDir       string // Per-plugin output directory (write access)
 }
 
 // Manager manages sandboxed plugin process lifecycles.
@@ -82,12 +84,21 @@ func (m *Manager) BuildProfile(info PluginInfo) arapuca.Profile {
 		read = append(read, pythonReadPaths()...)
 	}
 
+	if info.SessionDir != "" {
+		read = append(read, info.SessionDir)
+	}
+
 	tmpDir := m.TmpDir(info.Name)
 	dataDir := m.DataDir(info.Name)
 
+	write := []string{tmpDir, dataDir}
+	if info.OutputDir != "" {
+		write = append(write, info.OutputDir)
+	}
+
 	return arapuca.Profile{
 		ReadPaths:     read,
-		WritePaths:    []string{tmpDir, dataDir},
+		WritePaths:    write,
 		MaxMemoryMB:   limits.MaxMemoryMB,
 		MaxCPUPct:     limits.MaxCPUPct,
 		MaxPIDs:       limits.MaxPIDs,
@@ -96,17 +107,24 @@ func (m *Manager) BuildProfile(info PluginInfo) arapuca.Profile {
 	}
 }
 
-// PrepareDirs creates the per-plugin tmpdir and datadir with 0700
-// permissions. Returns the paths. Safe to call multiple times.
-func (m *Manager) PrepareDirs(pluginName string) (tmpDir, dataDir string, err error) {
-	tmpDir = m.TmpDir(pluginName)
-	dataDir = m.DataDir(pluginName)
+// PrepareDirs creates the per-plugin tmpdir, datadir, and outputDir
+// with 0700 permissions. The outputDir is created only if set on
+// info. Landlock needs directories to exist to create path_beneath
+// rules. Safe to call multiple times.
+func (m *Manager) PrepareDirs(info PluginInfo) (tmpDir, dataDir string, err error) {
+	tmpDir = m.TmpDir(info.Name)
+	dataDir = m.DataDir(info.Name)
 
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("create tmpdir: %w", err)
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("create datadir: %w", err)
+	}
+	if info.OutputDir != "" {
+		if err := os.MkdirAll(info.OutputDir, 0o700); err != nil {
+			return "", "", fmt.Errorf("create output dir: %w", err)
+		}
 	}
 	return tmpDir, dataDir, nil
 }
@@ -132,7 +150,7 @@ func (m *Manager) DataDir(pluginName string) string {
 // a Process with stdin/stdout/stderr pipes for the parent.
 func (m *Manager) Launch(ctx context.Context, info PluginInfo, env map[string]string) (*Process, error) {
 	profile := m.BuildProfile(info)
-	tmpDir, _, err := m.PrepareDirs(info.Name)
+	tmpDir, _, err := m.PrepareDirs(info)
 	if err != nil {
 		return nil, err
 	}

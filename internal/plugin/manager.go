@@ -666,6 +666,10 @@ func (m *Manager) preparePlugin(name string) (*Handle, error) {
 	}
 
 	handle := NewHandle(manifest, m.svcHandler, processCfg, m.cfg.Plugins.ToolCallTimeout, vars)
+	handle.sessionDir = m.sessionDir
+	if m.sessionDir != "" {
+		handle.outputDir = filepath.Join(m.sessionDir, "wtmcp", name)
+	}
 	if m.sbMgr != nil {
 		handle.SetSandbox(m.sbMgr)
 	}

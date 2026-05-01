@@ -36,6 +36,8 @@ type Process struct {
 	manifest          *Manifest
 	handler           ServiceHandler
 	groupVars         map[string]string
+	sessionDir        string
+	outputDir         string
 	state             State
 	Resources         []protocol.ResourceDef // resources discovered at init
 	Domains           []string               // dynamic domains from init_ok
@@ -131,6 +133,8 @@ func (p *Process) startSandboxed(ctx context.Context, stdin *io.WriteCloser, std
 		Dir:             p.manifest.Dir,
 		Handler:         p.manifest.Handler,
 		CredentialGroup: p.manifest.CredentialGroup,
+		SessionDir:      p.sessionDir,
+		OutputDir:       p.outputDir,
 	}, env)
 	if err != nil {
 		cancel()

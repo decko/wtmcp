@@ -35,6 +35,8 @@ type Handle struct {
 	groupVars   map[string]string
 	processCfg  ProcessConfig
 	sbMgr       *sandbox.Manager
+	sessionDir  string
+	outputDir   string
 	mu          sync.Mutex   // serialize tool calls for concurrency:1
 	resMu       sync.RWMutex // protects resources
 	restartMu   sync.Mutex   // protects restarts slice
@@ -62,6 +64,8 @@ func (h *Handle) SetSandbox(sb *sandbox.Manager) {
 // Start launches the plugin process.
 func (h *Handle) Start(ctx context.Context) error {
 	h.process = NewProcess(h.manifest, h.handler, h.processCfg, h.groupVars)
+	h.process.sessionDir = h.sessionDir
+	h.process.outputDir = h.outputDir
 	if h.sbMgr != nil {
 		h.process.SetSandbox(h.sbMgr)
 	}
@@ -220,6 +224,8 @@ func (h *Handle) callOneshot(ctx context.Context, toolName string, params json.R
 			Dir:             h.manifest.Dir,
 			Handler:         h.manifest.Handler,
 			CredentialGroup: h.manifest.CredentialGroup,
+			SessionDir:      h.sessionDir,
+			OutputDir:       h.outputDir,
 		}, env)
 		if err != nil {
 			return nil, fmt.Errorf("sandbox launch: %w", err)
