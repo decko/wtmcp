@@ -1981,11 +1981,11 @@ func TestAppendToNonEmptyDocument(t *testing.T) {
 }
 
 func TestSaveDocumentFile(t *testing.T) {
-	origWorkDir := workDir
-	t.Cleanup(func() { workDir = origWorkDir })
+	origOutputDir := outputDir
+	t.Cleanup(func() { outputDir = origOutputDir })
 
 	tmpDir := t.TempDir()
-	workDir = tmpDir
+	outputDir = tmpDir
 
 	t.Run("saves with title-derived path", func(t *testing.T) {
 		got, err := saveDocumentFile("My Document", "", "content", ".txt")
@@ -1994,9 +1994,6 @@ func TestSaveDocumentFile(t *testing.T) {
 		}
 		if !strings.Contains(got, "My Document.txt") {
 			t.Errorf("path %q should contain My Document.txt", got)
-		}
-		if !strings.Contains(got, "docs") {
-			t.Errorf("path %q should contain docs", got)
 		}
 	})
 
@@ -2022,10 +2019,9 @@ func TestSaveDocumentFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("saveDocumentFile: %v", err)
 		}
-		docsDir := filepath.Join(tmpDir, "docs")
-		resolved, _ := filepath.EvalSymlinks(docsDir)
+		resolved, _ := filepath.EvalSymlinks(tmpDir)
 		if !strings.HasPrefix(got, resolved+string(os.PathSeparator)) {
-			t.Errorf("path %q escapes docs directory %q", got, resolved)
+			t.Errorf("path %q escapes output directory %q", got, resolved)
 		}
 	})
 
@@ -2043,19 +2039,18 @@ func TestSaveDocumentFile(t *testing.T) {
 		}
 	})
 
-	t.Run("empty workDir rejected", func(t *testing.T) {
-		workDir = ""
+	t.Run("empty outputDir rejected", func(t *testing.T) {
+		outputDir = ""
+		t.Cleanup(func() { outputDir = tmpDir })
 		_, err := saveDocumentFile("test", "", "content", ".txt")
 		if err == nil {
-			t.Fatal("expected error when workDir is empty")
+			t.Fatal("expected error when outputDir is empty")
 		}
-		workDir = tmpDir
 	})
 
-	t.Run("symlink in docs dir detected after creation", func(t *testing.T) {
+	t.Run("symlink in output dir detected after creation", func(t *testing.T) {
 		outside := t.TempDir()
-		docsDir := filepath.Join(tmpDir, "docs")
-		linkDir := filepath.Join(docsDir, "escape")
+		linkDir := filepath.Join(tmpDir, "escape")
 		if err := os.Symlink(outside, linkDir); err != nil {
 			t.Skipf("symlinks not supported: %v", err)
 		}
@@ -2063,7 +2058,7 @@ func TestSaveDocumentFile(t *testing.T) {
 
 		_, err := saveDocumentFile("", "escape/evil.txt", "pwned", ".txt")
 		if err == nil {
-			t.Fatal("expected error for symlink escaping docs dir")
+			t.Fatal("expected error for symlink escaping output dir")
 		}
 	})
 }
@@ -5635,13 +5630,13 @@ func TestAllSupportedLanguages(t *testing.T) {
 }
 
 func TestReadFileForWrite(t *testing.T) {
-	// Save and restore the global workDir between tests
-	origWorkDir := workDir
-	t.Cleanup(func() { workDir = origWorkDir })
+	// Save and restore the global sessionDir between tests
+	origSessionDir := sessionDir
+	t.Cleanup(func() { sessionDir = origSessionDir })
 
-	t.Run("valid file in workDir", func(t *testing.T) {
+	t.Run("valid file in sessionDir", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 		path := filepath.Join(dir, "test.md")
 		if err := os.WriteFile(path, []byte("hello world"), 0o600); err != nil {
 			t.Fatalf("write file: %v", err)
@@ -5656,9 +5651,9 @@ func TestReadFileForWrite(t *testing.T) {
 		}
 	})
 
-	t.Run("relative path resolved against workDir", func(t *testing.T) {
+	t.Run("relative path resolved against sessionDir", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 		if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("relative"), 0o600); err != nil {
 			t.Fatalf("write file: %v", err)
 		}
@@ -5674,23 +5669,23 @@ func TestReadFileForWrite(t *testing.T) {
 
 	t.Run("path traversal rejected", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 
 		_, err := readFileForWrite("../../../etc/hostname")
 		if err == nil {
 			t.Fatal("expected error for path traversal")
 		}
-		if !strings.Contains(err.Error(), "escapes working directory") &&
+		if !strings.Contains(err.Error(), "escapes session directory") &&
 			!strings.Contains(err.Error(), "resolve path") {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
 
-	t.Run("absolute path outside workDir rejected", func(t *testing.T) {
+	t.Run("absolute path outside sessionDir rejected", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 
-		// Create a file outside workDir
+		// Create a file outside sessionDir
 		outside := t.TempDir()
 		outsidePath := filepath.Join(outside, "secret.txt")
 		if err := os.WriteFile(outsidePath, []byte("secret"), 0o600); err != nil {
@@ -5699,16 +5694,16 @@ func TestReadFileForWrite(t *testing.T) {
 
 		_, err := readFileForWrite(outsidePath)
 		if err == nil {
-			t.Fatal("expected error for absolute path outside workDir")
+			t.Fatal("expected error for absolute path outside sessionDir")
 		}
-		if !strings.Contains(err.Error(), "escapes working directory") {
+		if !strings.Contains(err.Error(), "escapes session directory") {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
 
-	t.Run("symlink pointing outside workDir rejected", func(t *testing.T) {
+	t.Run("symlink pointing outside sessionDir rejected", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 
 		outside := t.TempDir()
 		outsidePath := filepath.Join(outside, "secret.txt")
@@ -5723,14 +5718,14 @@ func TestReadFileForWrite(t *testing.T) {
 
 		_, err := readFileForWrite(linkPath)
 		if err == nil {
-			t.Fatal("expected error for symlink outside workDir")
+			t.Fatal("expected error for symlink outside sessionDir")
 		}
-		if !strings.Contains(err.Error(), "escapes working directory") {
+		if !strings.Contains(err.Error(), "escapes session directory") {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
 
-	t.Run("workDir is symlink file inside real dir works", func(t *testing.T) {
+	t.Run("sessionDir is symlink file inside real dir works", func(t *testing.T) {
 		realDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(realDir, "doc.md"), []byte("content"), 0o600); err != nil {
 			t.Fatalf("write file: %v", err)
@@ -5741,7 +5736,7 @@ func TestReadFileForWrite(t *testing.T) {
 		if err := os.Symlink(realDir, linkDir); err != nil {
 			t.Skipf("symlinks not supported: %v", err)
 		}
-		workDir = linkDir
+		sessionDir = linkDir
 
 		data, err := readFileForWrite("doc.md")
 		if err != nil {
@@ -5754,7 +5749,7 @@ func TestReadFileForWrite(t *testing.T) {
 
 	t.Run("non-existent file returns error", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 
 		_, err := readFileForWrite(filepath.Join(dir, "missing.md"))
 		if err == nil {
@@ -5764,7 +5759,7 @@ func TestReadFileForWrite(t *testing.T) {
 
 	t.Run("directory path rejected", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 		subdir := filepath.Join(dir, "subdir")
 		if err := os.MkdirAll(subdir, 0o750); err != nil {
 			t.Fatalf("mkdir: %v", err)
@@ -5781,7 +5776,7 @@ func TestReadFileForWrite(t *testing.T) {
 
 	t.Run("file exceeding size limit rejected", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 		path := filepath.Join(dir, "huge.md")
 		// Create a file just over the limit using sparse file
 		f, err := os.Create(filepath.Clean(path))
@@ -5807,7 +5802,7 @@ func TestReadFileForWrite(t *testing.T) {
 
 	t.Run("empty file returns empty bytes", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 		path := filepath.Join(dir, "empty.md")
 		if err := os.WriteFile(path, []byte{}, 0o600); err != nil {
 			t.Fatalf("write file: %v", err)
@@ -5824,7 +5819,7 @@ func TestReadFileForWrite(t *testing.T) {
 
 	t.Run("path with spaces works", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 		path := filepath.Join(dir, "my document.md")
 		if err := os.WriteFile(path, []byte("spaced"), 0o600); err != nil {
 			t.Fatalf("write file: %v", err)
@@ -5839,21 +5834,21 @@ func TestReadFileForWrite(t *testing.T) {
 		}
 	})
 
-	t.Run("empty workDir rejected", func(t *testing.T) {
-		workDir = ""
+	t.Run("empty sessionDir rejected", func(t *testing.T) {
+		sessionDir = ""
 
 		_, err := readFileForWrite("/tmp/anything.md")
 		if err == nil {
-			t.Fatal("expected error when workDir is empty")
+			t.Fatal("expected error when sessionDir is empty")
 		}
-		if !strings.Contains(err.Error(), "requires a configured working directory") {
+		if !strings.Contains(err.Error(), "requires a configured session directory") {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
 
 	t.Run("empty file_path returns error", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 
 		_, err := readFileForWrite("")
 		if err == nil {
@@ -5863,8 +5858,8 @@ func TestReadFileForWrite(t *testing.T) {
 }
 
 func TestToolWriteContentResolution(t *testing.T) {
-	origWorkDir := workDir
-	t.Cleanup(func() { workDir = origWorkDir })
+	origSessionDir := sessionDir
+	t.Cleanup(func() { sessionDir = origSessionDir })
 
 	t.Run("both content and file_path empty returns error", func(t *testing.T) {
 		p := writeParams{
@@ -5902,7 +5897,7 @@ func TestToolWriteContentResolution(t *testing.T) {
 
 	t.Run("file_path used when content empty", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 		fpath := filepath.Join(dir, "input.md")
 		if err := os.WriteFile(fpath, []byte("from file"), 0o600); err != nil {
 			t.Fatalf("write file: %v", err)
@@ -5930,7 +5925,7 @@ func TestToolWriteContentResolution(t *testing.T) {
 
 	t.Run("content takes precedence over file_path", func(t *testing.T) {
 		dir := t.TempDir()
-		workDir = dir
+		sessionDir = dir
 		fpath := filepath.Join(dir, "input.md")
 		if err := os.WriteFile(fpath, []byte("from file"), 0o600); err != nil {
 			t.Fatalf("write file: %v", err)

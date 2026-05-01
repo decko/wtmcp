@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	docsSvc *docs.Service
-	workDir string
+	docsSvc    *docs.Service
+	sessionDir string
+	outputDir  string
 )
 
 func main() {
@@ -48,7 +49,8 @@ func main() {
 			return fmt.Errorf("docs service: %w", err)
 		}
 		docsSvc = svc
-		workDir = cfg["_work_dir"]
+		sessionDir = cfg["_session_dir"]
+		outputDir = cfg["_output_dir"]
 		return nil
 	})
 

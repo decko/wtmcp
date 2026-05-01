@@ -107,17 +107,20 @@ func extractDocumentID(input string) string {
 }
 
 // saveDocumentFile saves document content to a local file.
-// If outputPath is empty, saves to docs/<title>.<ext> under workDir.
+// If outputPath is empty, saves to <outputDir>/<title>.<ext>.
 func saveDocumentFile(title, outputPath, content, ext string) (string, error) {
-	if workDir == "" {
-		return "", fmt.Errorf("save requires a configured working directory")
+	if outputDir == "" {
+		return "", fmt.Errorf("save requires a configured output directory")
 	}
 
-	resolvedWork, err := filepath.EvalSymlinks(workDir)
+	absBase, err := filepath.Abs(outputDir)
 	if err != nil {
-		return "", fmt.Errorf("resolve work dir: %w", err)
+		return "", fmt.Errorf("resolve output dir: %w", err)
 	}
-	baseDir := filepath.Join(resolvedWork, "docs")
+	if resolved, err := filepath.EvalSymlinks(absBase); err == nil {
+		absBase = resolved
+	}
+	baseDir := absBase
 
 	if outputPath == "" {
 		safeTitle := reUnsafeChars.ReplaceAllString(title, "_")
@@ -127,10 +130,6 @@ func saveDocumentFile(title, outputPath, content, ext string) (string, error) {
 		outputPath = filepath.Join(baseDir, outputPath)
 	}
 
-	absBase, err := filepath.Abs(baseDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve base dir: %w", err)
-	}
 	absOutput, err := filepath.Abs(outputPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve output path: %w", err)
@@ -2435,34 +2434,34 @@ func convertMarkdownToRequests(segments []markdownSegment, startIndex int64) []*
 const maxReadFileSize = 10 << 20 // 10 MB
 
 func readFileForWrite(filePath string) ([]byte, error) {
-	if workDir == "" {
-		return nil, fmt.Errorf("file_path requires a configured working directory")
+	if sessionDir == "" {
+		return nil, fmt.Errorf("file_path requires a configured session directory")
 	}
 
 	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(workDir, filePath)
+		filePath = filepath.Join(sessionDir, filePath)
 	}
 
-	resolvedWork, err := filepath.EvalSymlinks(workDir)
+	resolvedSession, err := filepath.EvalSymlinks(sessionDir)
 	if err != nil {
-		return nil, fmt.Errorf("resolve work dir: %w", err)
+		return nil, fmt.Errorf("resolve session dir: %w", err)
 	}
 	resolved, err := filepath.EvalSymlinks(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve path: %w", err)
 	}
 
-	absWork, err := filepath.Abs(resolvedWork)
+	absSession, err := filepath.Abs(resolvedSession)
 	if err != nil {
-		return nil, fmt.Errorf("abs work dir: %w", err)
+		return nil, fmt.Errorf("abs session dir: %w", err)
 	}
 	absResolved, err := filepath.Abs(resolved)
 	if err != nil {
 		return nil, fmt.Errorf("abs file path: %w", err)
 	}
-	if !strings.HasPrefix(absResolved, absWork+string(os.PathSeparator)) &&
-		absResolved != absWork {
-		return nil, fmt.Errorf("file path escapes working directory: %s", filePath)
+	if !strings.HasPrefix(absResolved, absSession+string(os.PathSeparator)) &&
+		absResolved != absSession {
+		return nil, fmt.Errorf("file path escapes session directory: %s", filePath)
 	}
 
 	info, err := os.Stat(resolved)
