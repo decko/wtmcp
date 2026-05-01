@@ -15,18 +15,26 @@ import (
 	"github.com/LeGambiArt/wtmcp/pkg/handler"
 )
 
-var gmailSvc *gmail.Service
+var (
+	gmailSvc  *gmail.Service
+	outputDir string
+)
 
 func main() {
 	p := handler.New()
 
-	p.OnInit(func(_ json.RawMessage) error {
+	p.OnInit(func(cfgRaw json.RawMessage) error {
 		client := handler.NewProxyTransport(p).Client()
 		svc, err := gmail.NewService(context.Background(), option.WithHTTPClient(client))
 		if err != nil {
 			return fmt.Errorf("gmail service: %w", err)
 		}
 		gmailSvc = svc
+
+		var cfg map[string]string
+		if err := json.Unmarshal(cfgRaw, &cfg); err == nil {
+			outputDir = cfg["_output_dir"]
+		}
 		return nil
 	})
 

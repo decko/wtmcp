@@ -168,6 +168,9 @@ func toolFetchAndCache(params, _ json.RawMessage) (any, error) {
 
 	// Save to cache
 	cacheDir := cacheDirectory()
+	if cacheDir == "" {
+		return nil, fmt.Errorf("gmail cache requires a configured output directory")
+	}
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create cache dir: %w", err)
 	}
@@ -458,7 +461,10 @@ func formatAddress(addr string) string {
 }
 
 func cacheDirectory() string {
-	return ".gmail_cache"
+	if outputDir != "" {
+		return filepath.Join(outputDir, "cache")
+	}
+	return ""
 }
 
 func generateCacheFilename(label string) string {
