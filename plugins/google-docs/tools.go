@@ -26,7 +26,7 @@ var (
 	reUnorderedList = regexp.MustCompile(`^(\s*)([-*+])\s+(.+)$`)
 	reDateChip      = regexp.MustCompile(`@date\((\d{4}-\d{2}-\d{2})\)`)
 	rePersonChip    = regexp.MustCompile(`@\(([^)]+)\)`)
-	reLinkInline    = regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`)
+	reLinkInline    = regexp.MustCompile(`\[([^\]]+)\]\(((?:[^\s()]*(?:\([^\s()]*\))?)*)\)`)
 	// Table detection patterns
 	reTableRow       = regexp.MustCompile(`^\s*\|(.+\|)+\s*$`)
 	reTableSeparator = regexp.MustCompile(`^\s*\|[\s\-:]*\-[\s\-:]*(\|[\s\-:]*\-[\s\-:]*)*\|\s*$`)

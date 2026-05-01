@@ -1041,6 +1041,41 @@ func TestLinkSchemeValidation(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("URL with parentheses (Wikipedia)", func(t *testing.T) {
+		segments := parseSimpleFormatting("[link](https://en.wikipedia.org/wiki/Foo_(bar))")
+		found := false
+		for _, seg := range segments {
+			if seg.linkURL == "https://en.wikipedia.org/wiki/Foo_(bar)" && seg.text == "link" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("Wikipedia URL with parentheses should be captured in full")
+		}
+	})
+
+	t.Run("simple URL still works", func(t *testing.T) {
+		segments := parseSimpleFormatting("[text](https://example.com/path)")
+		found := false
+		for _, seg := range segments {
+			if seg.linkURL == "https://example.com/path" && seg.text == "text" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("simple URL should still work")
+		}
+	})
+
+	t.Run("empty URL rejected", func(t *testing.T) {
+		segments := parseSimpleFormatting("[text]()")
+		for _, seg := range segments {
+			if seg.linkURL != "" {
+				t.Errorf("empty URL should be rejected, got linkURL=%q", seg.linkURL)
+			}
+		}
+	})
 }
 
 func TestHeadingsWithInlineFormatting(t *testing.T) {
