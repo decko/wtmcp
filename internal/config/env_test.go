@@ -287,7 +287,7 @@ func TestLoadSingleEnvGroupMissingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vars, err := LoadSingleEnvGroup(envDir, "nonexistent")
+	vars, err := LoadSingleEnvGroup(envDir, "nonexistent", EnvLoadOptions{})
 	if err != nil {
 		t.Fatalf("expected no error for missing file, got: %v", err)
 	}

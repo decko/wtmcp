@@ -22,15 +22,19 @@ var (
 func main() {
 	p := handler.New()
 
-	p.OnInit(func(_ json.RawMessage) error {
+	p.OnInit(func(cfgRaw json.RawMessage) error {
 		client := handler.NewProxyTransport(p).Client()
 		svc, err := docs.NewService(context.Background(), option.WithHTTPClient(client))
 		if err != nil {
 			return fmt.Errorf("docs service: %w", err)
 		}
 		docsSvc = svc
-		sessionDir = cfg["_session_dir"]
-		outputDir = cfg["_output_dir"]
+
+		var cfg map[string]string
+		if err := json.Unmarshal(cfgRaw, &cfg); err == nil {
+			sessionDir = cfg["_session_dir"]
+			outputDir = cfg["_output_dir"]
+		}
 		return nil
 	})
 

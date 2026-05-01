@@ -21,14 +21,18 @@ var (
 func main() {
 	p := handler.New()
 
-	p.OnInit(func(_ json.RawMessage) error {
+	p.OnInit(func(cfgRaw json.RawMessage) error {
 		client := handler.NewProxyTransport(p).Client()
 		svc, err := drive.NewService(context.Background(), option.WithHTTPClient(client))
 		if err != nil {
 			return fmt.Errorf("drive service: %w", err)
 		}
 		driveSvc = svc
-		outputDir = cfg["_output_dir"]
+
+		var cfg map[string]string
+		if err := json.Unmarshal(cfgRaw, &cfg); err == nil {
+			outputDir = cfg["_output_dir"]
+		}
 		return nil
 	})
 
