@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"google.golang.org/api/docs/v1"
 )
@@ -761,6 +762,56 @@ func TestIntraWordEmphasis(t *testing.T) {
 		segs := parseSimpleFormatting("hello __world__ end")
 		if !hasFormatting(segs, "underline") {
 			t.Error("__world__ with whitespace boundaries should produce underline")
+		}
+	})
+}
+
+func TestUTF8MultiByteSegments(t *testing.T) {
+	allText := func(segments []markdownSegment) string {
+		var s string
+		for _, seg := range segments {
+			s += seg.text
+		}
+		return s
+	}
+
+	t.Run("CJK characters preserved", func(t *testing.T) {
+		segs := parseSimpleFormatting("日本語")
+		if allText(segs) != "日本語" {
+			t.Errorf("got %q, want 日本語", allText(segs))
+		}
+		for i, seg := range segs {
+			if !utf8.ValidString(seg.text) {
+				t.Errorf("segment %d is invalid UTF-8: %q", i, seg.text)
+			}
+		}
+	})
+
+	t.Run("accented characters preserved", func(t *testing.T) {
+		segs := parseSimpleFormatting("café")
+		if allText(segs) != "café" {
+			t.Errorf("got %q, want café", allText(segs))
+		}
+	})
+
+	t.Run("emoji 4-byte rune preserved", func(t *testing.T) {
+		segs := parseSimpleFormatting("hello 🎉 world")
+		if allText(segs) != "hello 🎉 world" {
+			t.Errorf("got %q, want hello 🎉 world", allText(segs))
+		}
+	})
+
+	t.Run("formatted multi-byte text", func(t *testing.T) {
+		segs := parseSimpleFormatting("**日本語**")
+		merged := mergeSegments(segs)
+		found := false
+		for _, seg := range merged {
+			if seg.bold && seg.text == "日本語" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected bold segment with text 日本語")
 		}
 	})
 }

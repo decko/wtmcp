@@ -1386,9 +1386,10 @@ func parseSimpleFormattingWithDepth(text string, depth int) []markdownSegment {
 			// let the rest be parsed normally on subsequent iterations.
 		}
 
-		// Plain character
-		segments = append(segments, markdownSegment{text: text[pos : pos+1]})
-		pos++
+		// Plain character — advance by full rune to avoid splitting multi-byte UTF-8
+		_, size := utf8.DecodeRuneInString(text[pos:])
+		segments = append(segments, markdownSegment{text: text[pos : pos+size]})
+		pos += size
 	}
 
 	return segments
