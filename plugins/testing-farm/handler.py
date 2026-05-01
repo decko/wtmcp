@@ -128,7 +128,17 @@ def log(message):
 
 
 def _discover_ssh_keys():
-    """Discover SSH public keys from ~/.ssh/ or config override."""
+    """Discover SSH public keys from config or filesystem fallback.
+
+    Prefers keys injected via _ssh_public_keys config (sandbox-safe).
+    Falls back to reading ~/.ssh/id_*.pub directly (unsandboxed mode).
+    """
+    # Prefer keys passed via config (no filesystem access needed)
+    config_keys = config.get("_ssh_public_keys", "")
+    if config_keys:
+        return [k for k in config_keys.strip().split("\n") if k.strip()]
+
+    # Fallback: read from filesystem (unsandboxed mode)
     keys = []
     key_path = config.get("ssh_key_path", "")
 

@@ -974,7 +974,38 @@ func (m *Manager) resolveConfig(name string, manifest *Manifest) map[string]stri
 		resolved["_session_dir"] = m.sessionDir
 		resolved["_output_dir"] = filepath.Join(m.sessionDir, "wtmcp", name)
 	}
+	if name == "testing-farm" {
+		if keys := discoverSSHPublicKeys(); keys != "" {
+			resolved["_ssh_public_keys"] = keys
+		}
+	}
 	return resolved
+}
+
+// discoverSSHPublicKeys reads SSH public keys from ~/.ssh/id_*.pub.
+// Runs in the unsandboxed core process so plugins don't need
+// filesystem access to ~/.ssh/.
+func discoverSSHPublicKeys() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	pattern := filepath.Join(home, ".ssh", "id_*.pub")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return ""
+	}
+	var keys []string
+	for _, m := range matches {
+		data, err := os.ReadFile(m) //nolint:gosec // reading public keys only
+		if err != nil {
+			continue
+		}
+		if k := strings.TrimSpace(string(data)); k != "" {
+			keys = append(keys, k)
+		}
+	}
+	return strings.Join(keys, "\n")
 }
 
 // hasVaultFiles reports whether any files in a directory start with
