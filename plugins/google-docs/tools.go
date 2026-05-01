@@ -432,7 +432,7 @@ func summarizeDocument(doc *docs.Document, includeStructure bool) map[string]any
 		"lists":      lists,
 		"tables":     tables,
 		"word_count": wordCount,
-		"characters": len(fullText),
+		"characters": utf8.RuneCountInString(fullText),
 	}
 
 	summary["preview"] = preview
@@ -514,7 +514,7 @@ func toolGetDocumentText(params, _ json.RawMessage) (any, error) {
 		"document_id": doc.DocumentId,
 		"title":       doc.Title,
 		"text":        text,
-		"characters":  len(text),
+		"characters":  utf8.RuneCountInString(text),
 		"word_count":  len(strings.Fields(text)),
 	}
 
@@ -572,7 +572,7 @@ func toolGetDocumentMarkdown(params, _ json.RawMessage) (any, error) {
 		"document_id": doc.DocumentId,
 		"title":       doc.Title,
 		"markdown":    markdown,
-		"characters":  len(markdown),
+		"characters":  utf8.RuneCountInString(markdown),
 	}
 
 	if p.SaveToFile {
@@ -2556,7 +2556,7 @@ func toolWrite(params, _ json.RawMessage) (any, error) {
 			return nil, err
 		}
 
-		result["characters"] = len(text)
+		result["characters"] = utf8.RuneCountInString(text)
 		if usedFilePath {
 			result["source_file"] = p.FilePath
 			result["source_bytes"] = len(text)
@@ -2584,7 +2584,7 @@ func toolWrite(params, _ json.RawMessage) (any, error) {
 		"title":        doc.Title,
 		"status":       "success",
 		"insert_index": insertIndex,
-		"characters":   len(text),
+		"characters":   utf8.RuneCountInString(text),
 		"replies":      len(resp.Replies),
 		"tables":       0,
 	}
