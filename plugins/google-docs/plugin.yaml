@@ -108,7 +108,7 @@ tools:
       is_markdown:
         type: boolean
         default: true
-        description: "Parse content as markdown and apply rich formatting (headings, bold, italic, underline, strikethrough, links, lists, tables, code, smart chips)"
+        description: "Parse content as markdown and apply rich formatting (headings, bold, italic, underline, strikethrough, links, lists, tables, code, smart chips, horizontal rules)"
       append_to_end:
         type: boolean
         default: true

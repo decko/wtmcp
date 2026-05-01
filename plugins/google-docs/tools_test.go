@@ -907,6 +907,155 @@ func TestEmptyDelimiterPairs(t *testing.T) {
 	})
 }
 
+func TestHorizontalRule(t *testing.T) {
+	hasHR := func(segments []markdownSegment) bool {
+		for _, seg := range segments {
+			if seg.isHorizontalRule {
+				return true
+			}
+		}
+		return false
+	}
+
+	countHR := func(segments []markdownSegment) int {
+		n := 0
+		for _, seg := range segments {
+			if seg.isHorizontalRule {
+				n++
+			}
+		}
+		return n
+	}
+
+	t.Run("--- is horizontal rule", func(t *testing.T) {
+		segs := parseMarkdown("---")
+		if !hasHR(segs) {
+			t.Error("--- should produce a horizontal rule segment")
+		}
+	})
+
+	t.Run("*** is horizontal rule", func(t *testing.T) {
+		segs := parseMarkdown("***")
+		if !hasHR(segs) {
+			t.Error("*** should produce a horizontal rule segment")
+		}
+	})
+
+	t.Run("___ is horizontal rule", func(t *testing.T) {
+		segs := parseMarkdown("___")
+		if !hasHR(segs) {
+			t.Error("___ should produce a horizontal rule segment")
+		}
+	})
+
+	t.Run("----- is horizontal rule", func(t *testing.T) {
+		segs := parseMarkdown("-----")
+		if !hasHR(segs) {
+			t.Error("----- should produce a horizontal rule segment")
+		}
+	})
+
+	// Intentional CommonMark divergence: spaced thematic breaks not supported
+	t.Run("- - - is NOT horizontal rule", func(t *testing.T) {
+		segs := parseMarkdown("- - -")
+		if hasHR(segs) {
+			t.Error("- - - should NOT be a horizontal rule (spaced form not supported)")
+		}
+	})
+
+	t.Run("*** alone is HR not bold-italic", func(t *testing.T) {
+		segs := parseMarkdown("***")
+		if !hasHR(segs) {
+			t.Error("*** on its own line should be HR")
+		}
+	})
+
+	t.Run("***text*** is formatting not HR", func(t *testing.T) {
+		segs := parseMarkdown("***text***")
+		if hasHR(segs) {
+			t.Error("***text*** should be formatting, not HR")
+		}
+	})
+
+	t.Run("___ alone is HR not underline", func(t *testing.T) {
+		segs := parseMarkdown("___")
+		if !hasHR(segs) {
+			t.Error("___ on its own line should be HR")
+		}
+	})
+
+	t.Run("___text___ is formatting not HR", func(t *testing.T) {
+		segs := parseMarkdown("___text___")
+		if hasHR(segs) {
+			t.Error("___text___ should be formatting, not HR")
+		}
+	})
+
+	t.Run("text then HR then text", func(t *testing.T) {
+		segs := parseMarkdown("above\n\n---\n\nbelow")
+		if !hasHR(segs) {
+			t.Error("--- between text should produce HR")
+		}
+		merged := mergeSegments(segs)
+		allText := ""
+		for _, seg := range merged {
+			allText += seg.text
+		}
+		if !strings.Contains(allText, "above") || !strings.Contains(allText, "below") {
+			t.Errorf("text around HR should be preserved, got %q", allText)
+		}
+	})
+
+	t.Run("consecutive HRs not merged", func(t *testing.T) {
+		segs := parseMarkdown("---\n---")
+		if countHR(segs) != 2 {
+			t.Errorf("expected 2 HR segments, got %d", countHR(segs))
+		}
+		// Verify mergeSegments doesn't collapse them
+		merged := mergeSegments(segs)
+		if countHR(merged) != 2 {
+			t.Errorf("expected 2 HR segments after merge, got %d", countHR(merged))
+		}
+	})
+
+	t.Run("HR inside code block is literal", func(t *testing.T) {
+		segs := parseMarkdown("```\n---\n```")
+		if hasHR(segs) {
+			t.Error("--- inside code block should NOT be HR")
+		}
+	})
+
+	t.Run("table separator not affected", func(t *testing.T) {
+		segs := parseMarkdown("| A | B |\n| --- | --- |\n| 1 | 2 |")
+		if hasHR(segs) {
+			t.Error("table separator --- should NOT produce HR")
+		}
+	})
+
+	t.Run("HR at start of document", func(t *testing.T) {
+		segs := parseMarkdown("---\nText")
+		if !hasHR(segs) {
+			t.Error("HR at start of document should be detected")
+		}
+	})
+
+	t.Run("HR at end of document", func(t *testing.T) {
+		segs := parseMarkdown("Text\n\n---")
+		if !hasHR(segs) {
+			t.Error("HR at end of document should be detected")
+		}
+	})
+
+	// Intentional CommonMark divergence: Setext headings not supported.
+	// "paragraph\n---" is treated as paragraph + HR, not Setext H2.
+	t.Run("Setext ambiguity treated as HR", func(t *testing.T) {
+		segs := parseMarkdown("paragraph\n---")
+		if !hasHR(segs) {
+			t.Error("--- after paragraph should be HR (Setext headings not supported)")
+		}
+	})
+}
+
 func TestUTF8MultiByteSegments(t *testing.T) {
 	allText := func(segments []markdownSegment) string {
 		var s string

@@ -92,7 +92,7 @@ Write content to a Google Doc with optional markdown formatting. Provide either 
 
 **Parameters:**
 - `document_id_or_url` (required): Document ID or URL
-- `file_path`: Path to a local file to read content from (preferred for large documents)
+- `file_path`: Path to a local file to read content from (preferred for large documents). Relative paths resolve against the caller's working directory.
 - `content`: Inline content to write (alternative to file_path)
 - `is_markdown` (default: true): Parse content as markdown and apply rich formatting
 - `append_to_end` (default: true): Append content to the end of the document
@@ -113,6 +113,7 @@ One of `content` or `file_path` must be provided. When both are provided, `conte
 - Nested lists: indent by 4 spaces (or 1 tab) per nesting level
 - Date smart chips: `@today` (current date) or `@date(YYYY-MM-DD)` (specific date)
 - Person smart chips: `@(email)` (e.g., `@(user@example.com)`)
+- Horizontal rules: `---`, `***`, or `___` (3+ identical characters on a line)
 
 When `is_markdown` is false, content is inserted as plain text without formatting.
 
@@ -443,6 +444,7 @@ italic = true
 | Underline (`__text__`) | ✅ Yes | Double underscore |
 | Links (`[text](url)`) | ✅ Yes | Absolute URLs only (`https://`, `http://`, `mailto:`) |
 | Headings (`# H1` to `###### H6`) | ✅ Yes | |
+| Horizontal rules (`---`, `***`, `___`) | ✅ Yes | No spaces between chars; rendered as paragraph border |
 | Ordered lists (`1.`, `2.`, etc.) | ✅ Yes | Converted to Google Docs numbered lists |
 | Unordered lists (`-`, `*`, `+`) | ✅ Yes | Converted to Google Docs bullet lists |
 | Nested lists (4 spaces or 1 tab per level) | ✅ Yes | Mixed ordered/unordered nesting supported |

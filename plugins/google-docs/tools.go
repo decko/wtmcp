@@ -718,6 +718,8 @@ type markdownSegment struct {
 	// Table support
 	isTable bool
 	table   *tableSegment
+	// Horizontal rule
+	isHorizontalRule bool
 }
 
 // tableCell represents a single cell in a markdown table.
@@ -1065,6 +1067,21 @@ func parseMarkdown(markdown string) []markdownSegment {
 				inlineSegs[j].listDepth = depth
 			}
 			segments = append(segments, inlineSegs...)
+			continue
+		}
+
+		// Check for horizontal rule (thematic break): 3+ identical -, *, or _
+		// Note: spaced variants like "- - -" are not supported (intentional
+		// simplification). "paragraph\n---" is treated as paragraph + HR,
+		// not a Setext H2 (Setext headings are not supported).
+		isHR := len(originalTrimmed) >= 3 &&
+			(strings.Repeat("-", len(originalTrimmed)) == originalTrimmed ||
+				strings.Repeat("*", len(originalTrimmed)) == originalTrimmed ||
+				strings.Repeat("_", len(originalTrimmed)) == originalTrimmed)
+		if isHR {
+			flushBody()
+			segments = append(segments, markdownSegment{isHorizontalRule: true})
+			lastWasHeading = false
 			continue
 		}
 
@@ -1500,7 +1517,8 @@ func mergeSegments(segments []markdownSegment) []markdownSegment {
 			curr.isInlineCode == prev.isInlineCode &&
 			curr.isCodeBlock == prev.isCodeBlock &&
 			curr.codeLanguage == prev.codeLanguage &&
-			!curr.isTable && !prev.isTable {
+			!curr.isTable && !prev.isTable &&
+			!curr.isHorizontalRule && !prev.isHorizontalRule {
 			// Merge by concatenating text
 			prev.text += curr.text
 		} else {
@@ -1952,6 +1970,56 @@ func convertMarkdownToRequests(segments []markdownSegment, startIndex int64) []*
 	for i, seg := range segments {
 		if seg.isTable && seg.table != nil {
 			fmt.Fprintf(os.Stderr, "WARNING: convertMarkdownToRequests called with table segment (skipping) — tables must be handled by insertMarkdownWithTables\n")
+			continue
+		}
+
+		// Horizontal rule: insert empty paragraph with bottom border
+		if seg.isHorizontalRule {
+			if currentListStart >= 0 {
+				listRanges = append(listRanges, listRange{
+					startIndex: currentListStart,
+					endIndex:   currentIndex,
+					isOrdered:  currentListIsOrdered,
+				})
+				currentListStart = -1
+			}
+			requests = append(requests, &docs.Request{
+				InsertText: &docs.InsertTextRequest{
+					Text:     "\n",
+					Location: &docs.Location{Index: currentIndex},
+				},
+			})
+			requests = append(requests, &docs.Request{
+				UpdateParagraphStyle: &docs.UpdateParagraphStyleRequest{
+					Range: &docs.Range{
+						StartIndex: currentIndex,
+						EndIndex:   currentIndex + 1,
+					},
+					ParagraphStyle: &docs.ParagraphStyle{
+						NamedStyleType: "NORMAL_TEXT",
+						BorderBottom: &docs.ParagraphBorder{
+							Color: &docs.OptionalColor{
+								Color: &docs.Color{
+									RgbColor: &docs.RgbColor{
+										Red: 0.8, Green: 0.8, Blue: 0.8,
+									},
+								},
+							},
+							DashStyle: "SOLID",
+							Width: &docs.Dimension{
+								Magnitude: 1,
+								Unit:      "PT",
+							},
+							Padding: &docs.Dimension{
+								Magnitude: 6,
+								Unit:      "PT",
+							},
+						},
+					},
+					Fields: "namedStyleType,borderBottom",
+				},
+			})
+			currentIndex++
 			continue
 		}
 
