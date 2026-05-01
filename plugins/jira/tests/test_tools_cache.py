@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import handler
@@ -14,6 +15,16 @@ def _mock_invalidate():
     """Mock invalidate_cache for all tests — it uses protocol I/O."""
     with patch.object(handler, "invalidate_cache") as mock:
         yield mock
+
+
+@pytest.fixture(autouse=True)
+def _set_session_dirs(tmp_path):
+    """Set _session_dir and _output_dir in handler config for all tests."""
+    handler.config["_session_dir"] = str(tmp_path)
+    handler.config["_output_dir"] = str(tmp_path)
+    yield
+    handler.config.pop("_session_dir", None)
+    handler.config.pop("_output_dir", None)
 
 
 def _mock_http(status, body):
@@ -62,19 +73,85 @@ def _write_export(tmp_path, data=None, name="sprint.json"):
 
 
 class TestValidateExportPath:
-    def test_resolves_absolute(self, tmp_path):
+    def test_resolves_relative(self, tmp_path):
+        path = tools_cache._validate_export_path("out.json")
+        assert path.name == "out.json"
+        assert str(path).startswith(str(tmp_path))
+
+    def test_resolves_absolute_inside(self, tmp_path):
         path = tools_cache._validate_export_path(str(tmp_path / "out.json"))
         assert path.name == "out.json"
 
-    def test_resolves_tmp(self):
-        path = tools_cache._validate_export_path("/tmp/test_export.json")
-        assert str(path).startswith("/tmp")
+    def test_rejects_outside(self, tmp_path):
+        with pytest.raises(ValueError, match="escapes output directory"):
+            tools_cache._validate_export_path("/etc/evil.json")
+
+    def test_rejects_traversal(self, tmp_path):
+        with pytest.raises(ValueError, match="escapes output directory"):
+            tools_cache._validate_export_path("../../etc/passwd")
 
     def test_rejects_empty(self):
-        import pytest
-
-        with pytest.raises(ValueError, match="file path is required"):
+        with pytest.raises(ValueError, match="output_file is required"):
             tools_cache._validate_export_path("")
+
+    def test_rejects_no_output_dir(self):
+        handler.config.pop("_output_dir", None)
+        with pytest.raises(ValueError, match="configured output directory"):
+            tools_cache._validate_export_path("file.json")
+
+
+# --- _validate_read_path ---
+
+
+class TestValidateReadPath:
+    def test_relative_in_output_dir(self, tmp_path):
+        test_file = tmp_path / "data.json"
+        test_file.write_text("{}")
+        path = tools_cache._validate_read_path("data.json")
+        assert path == test_file.resolve()
+
+    def test_relative_in_session_dir(self, tmp_path):
+        # Set output_dir to a subdir so session_dir is different
+        subdir = tmp_path / "wtmcp" / "jira"
+        subdir.mkdir(parents=True)
+        handler.config["_output_dir"] = str(subdir)
+        test_file = tmp_path / "user_file.md"
+        test_file.write_text("hello")
+        path = tools_cache._validate_read_path(str(test_file))
+        assert path == test_file.resolve()
+
+    def test_absolute_inside_session_dir(self, tmp_path):
+        test_file = tmp_path / "report.json"
+        test_file.write_text("{}")
+        path = tools_cache._validate_read_path(str(test_file))
+        assert path == test_file.resolve()
+
+    def test_rejects_outside_both_dirs(self, tmp_path):
+        import tempfile
+
+        other = tempfile.mkdtemp()
+        other_file = Path(other) / "secret.json"
+        other_file.write_text("secret")
+        with pytest.raises(FileNotFoundError):
+            tools_cache._validate_read_path(str(other_file))
+
+    def test_rejects_traversal(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            tools_cache._validate_read_path("../../etc/passwd")
+
+    def test_rejects_empty(self):
+        with pytest.raises(ValueError, match="file_path is required"):
+            tools_cache._validate_read_path("")
+
+    def test_rejects_no_dirs_configured(self):
+        handler.config.pop("_output_dir", None)
+        handler.config.pop("_session_dir", None)
+        with pytest.raises(ValueError, match="configured session directory"):
+            tools_cache._validate_read_path("file.json")
+
+    def test_nonexistent_file(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            tools_cache._validate_read_path("does_not_exist.json")
 
 
 # --- jira_export_sprint_data ---
@@ -141,8 +218,8 @@ class TestQueryLocalSprintData:
 
     def test_file_not_found(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = tools_cache.query_local_sprint_data({"file_path": str(tmp_path / "nope.json")})
-        assert "error" in result
+        with pytest.raises(FileNotFoundError):
+            tools_cache.query_local_sprint_data({"file_path": "nope.json"})
 
     def test_brief_mode(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -166,8 +243,8 @@ class TestCompareSpints:
 
     def test_missing_file(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = tools_cache.compare_sprints({"file_paths": str(tmp_path / "nope.json")})
-        assert "error" in result
+        with pytest.raises(FileNotFoundError):
+            tools_cache.compare_sprints({"file_paths": "nope.json"})
 
 
 # --- jira_sprint_metrics_summary ---
@@ -184,8 +261,8 @@ class TestSprintMetricsSummary:
 
     def test_file_not_found(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        result = tools_cache.sprint_metrics_summary({"file_path": str(tmp_path / "nope.json")})
-        assert "error" in result
+        with pytest.raises(FileNotFoundError):
+            tools_cache.sprint_metrics_summary({"file_path": "nope.json"})
 
 
 # --- jira_read_cache_summary ---
@@ -428,16 +505,15 @@ class TestAddAttachment:
             assert result["success"] is True
             assert result["id"] == "att-2"
 
-    def test_file_path_not_found(self):
-        result = tools_cache.add_attachment(
-            {
-                "issue_key": "PROJ-1",
-                "file_path": "/nonexistent/file.png",
-                "dry_run": False,
-            }
-        )
-        assert "error" in result
-        assert "not found" in result["error"].lower()
+    def test_file_path_not_found(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            tools_cache.add_attachment(
+                {
+                    "issue_key": "PROJ-1",
+                    "file_path": "nonexistent.png",
+                    "dry_run": False,
+                }
+            )
 
 
 # --- jira_delete_attachment ---

@@ -738,6 +738,41 @@ class TestDiscoverSshKeys:
             keys = handler._discover_ssh_keys()
             assert keys == []
 
+    def test_config_injected_keys_preferred(self):
+        config = {
+            "_ssh_public_keys": "ssh-ed25519 AAAA key1\nssh-rsa BBBB key2",
+            "ssh_key_path": "/should/not/be/read",
+        }
+        with patch.object(handler, "config", config):
+            keys = handler._discover_ssh_keys()
+            assert len(keys) == 2
+            assert keys[0] == "ssh-ed25519 AAAA key1"
+            assert keys[1] == "ssh-rsa BBBB key2"
+
+    def test_config_injected_single_key(self):
+        config = {"_ssh_public_keys": "ssh-ed25519 AAAA only"}
+        with patch.object(handler, "config", config):
+            keys = handler._discover_ssh_keys()
+            assert keys == ["ssh-ed25519 AAAA only"]
+
+    def test_empty_config_keys_falls_through(self, tmp_path):
+        ssh_dir = tmp_path / ".ssh"
+        ssh_dir.mkdir()
+        (ssh_dir / "id_ed25519.pub").write_text("ssh-ed25519 AAAA fallback")
+
+        with (
+            patch.object(handler, "config", {"_ssh_public_keys": ""}),
+            patch("os.path.expanduser", return_value=str(tmp_path)),
+        ):
+            keys = handler._discover_ssh_keys()
+            assert keys == ["ssh-ed25519 AAAA fallback"]
+
+    def test_config_keys_filters_blank_lines(self):
+        config = {"_ssh_public_keys": "ssh-ed25519 AAAA key1\n\n  \nssh-rsa BBBB key2\n"}
+        with patch.object(handler, "config", config):
+            keys = handler._discover_ssh_keys()
+            assert len(keys) == 2
+
 
 # --- testing_farm_get_ssh ---
 

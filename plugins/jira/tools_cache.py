@@ -21,16 +21,55 @@ from helpers import (
 )
 
 
-def _validate_export_path(file_path):
-    """Validate and resolve an export/cache file path.
+def _get_output_dir():
+    return handler.config.get("_output_dir", "")
 
-    Plugin processes run with cwd set to the plugin directory, not the
-    user's working directory, so we cannot validate against cwd. The
-    caller (LLM) provides absolute paths based on its own cwd.
-    """
+
+def _get_session_dir():
+    return handler.config.get("_session_dir", "")
+
+
+def _validate_export_path(file_path):
+    """Validate and resolve an export file path within the output directory."""
+    output_dir = _get_output_dir()
+    if not output_dir:
+        raise ValueError("save requires a configured output directory")
     if not file_path:
-        raise ValueError("file path is required")
-    return Path(file_path).resolve()
+        raise ValueError("output_file is required")
+    path = Path(file_path)
+    if not path.is_absolute():
+        path = Path(output_dir) / path
+    resolved = path.resolve()
+    base = Path(output_dir).resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError:
+        raise ValueError(f"path escapes output directory: {file_path}")
+    return resolved
+
+
+def _validate_read_path(file_path):
+    """Validate and resolve a read path within session or output directory."""
+    if not file_path:
+        raise ValueError("file_path is required")
+    path = Path(file_path)
+
+    for base_dir in [_get_output_dir(), _get_session_dir()]:
+        if not base_dir:
+            continue
+        candidate = path if path.is_absolute() else Path(base_dir) / path
+        resolved = candidate.resolve()
+        base = Path(base_dir).resolve()
+        try:
+            resolved.relative_to(base)
+            if resolved.is_file():
+                return resolved
+        except ValueError:
+            continue
+
+    if not _get_session_dir() and not _get_output_dir():
+        raise ValueError("file_path requires a configured session directory")
+    raise FileNotFoundError(f"file not found or outside allowed directories: {file_path}")
 
 
 def export_sprint_data(params):
@@ -169,9 +208,7 @@ def query_local_sprint_data(params):
     priority = params.get("priority")
     brief = params.get("brief", True)
 
-    path = _validate_export_path(file_path)
-    if not path.exists():
-        return {"error": f"File not found: {file_path}"}
+    path = _validate_read_path(file_path)
 
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
@@ -221,9 +258,7 @@ def compare_sprints(params):
 
     sprint_data = []
     for fp in file_paths:
-        path = _validate_export_path(fp)
-        if not path.exists():
-            return {"error": f"File not found: {fp}"}
+        path = _validate_read_path(fp)
 
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
@@ -243,9 +278,7 @@ def sprint_metrics_summary(params):
     """Generate metrics summary from exported sprint data."""
     file_path = params.get("file_path", "")
 
-    path = _validate_export_path(file_path)
-    if not path.exists():
-        return {"error": f"File not found: {file_path}"}
+    path = _validate_read_path(file_path)
 
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
@@ -267,9 +300,7 @@ def read_cache_summary(params):
     issue_keys = params.get("issue_keys")
     max_issues = int(params.get("max_issues", 20))
 
-    path = _validate_export_path(file_path)
-    if not path.exists():
-        return {"error": f"File not found: {file_path}"}
+    path = _validate_read_path(file_path)
 
     with path.open("r", encoding="utf-8") as f:
         cache_data = json.load(f)
@@ -316,9 +347,7 @@ def get_issue_from_cache(params):
     file_path = params.get("file_path", "")
     issue_key = validate_issue_key(params.get("issue_key", ""))
 
-    path = _validate_export_path(file_path)
-    if not path.exists():
-        return {"error": f"File not found: {file_path}"}
+    path = _validate_read_path(file_path)
 
     with path.open("r", encoding="utf-8") as f:
         cache_data = json.load(f)
@@ -454,9 +483,7 @@ def add_attachment(params):
 
     # Read from file_path or decode from base64 content
     if file_path:
-        path = Path(file_path)
-        if not path.is_file():
-            return {"error": f"File not found: {file_path}"}
+        path = _validate_read_path(file_path)
         content = path.read_bytes()
         if not filename:
             filename = path.name

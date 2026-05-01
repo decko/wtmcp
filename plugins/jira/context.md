@@ -149,12 +149,21 @@ handled automatically:
 
 ### Attachments
 
-Use `file_path` with an **absolute path** when attaching files.
-Relative paths won't resolve correctly since the plugin runs
-from a different working directory:
+Use `file_path` to attach files. Relative paths resolve against the
+caller's working directory:
 ```
 jira_add_attachment(issue_key="PROJ-123",
-                    file_path="/home/user/path/to/file.png")
+                    file_path="path/to/file.png")
+```
+
+### File Export and Local Analysis
+
+Export paths are relative to the output directory (`wtmcp/jira/`).
+Read paths resolve against both the output and session directories:
+```
+jira_export_sprint_data(board_id="42", sprint_id="123",
+                        output_file="sprint-123.json")
+jira_query_local_sprint_data(file_path="sprint-123.json")
 ```
 
 ### Brief Mode
