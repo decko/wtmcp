@@ -769,6 +769,74 @@ func TestIntraWordEmphasis(t *testing.T) {
 	})
 }
 
+func TestDateChipValidation(t *testing.T) {
+	t.Run("valid date produces InsertDate", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{isDateField: true, dateValue: "2026-04-15"}}}
+		reqs := populateTableCell(&cell, 5)
+		found := false
+		for _, req := range reqs {
+			if req.InsertDate != nil {
+				found = true
+				if !strings.Contains(req.InsertDate.DateElementProperties.Timestamp, "2026-04-15") {
+					t.Errorf("expected timestamp containing 2026-04-15, got %s",
+						req.InsertDate.DateElementProperties.Timestamp)
+				}
+			}
+		}
+		if !found {
+			t.Error("expected InsertDate request for valid date")
+		}
+	})
+
+	t.Run("invalid month falls back to current date", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{isDateField: true, dateValue: "9999-99-99"}}}
+		reqs := populateTableCell(&cell, 5)
+		for _, req := range reqs {
+			if req.InsertDate != nil {
+				if strings.Contains(req.InsertDate.DateElementProperties.Timestamp, "9999") {
+					t.Error("invalid date should fall back to current date, not use 9999")
+				}
+			}
+		}
+	})
+
+	t.Run("Feb 31 falls back to current date", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{isDateField: true, dateValue: "2026-02-31"}}}
+		reqs := populateTableCell(&cell, 5)
+		for _, req := range reqs {
+			if req.InsertDate != nil {
+				if strings.Contains(req.InsertDate.DateElementProperties.Timestamp, "2026-03") {
+					t.Error("Feb 31 should not normalize to March, should fall back to current date")
+				}
+			}
+		}
+	})
+
+	t.Run("non-leap Feb 29 falls back", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{isDateField: true, dateValue: "2025-02-29"}}}
+		reqs := populateTableCell(&cell, 5)
+		for _, req := range reqs {
+			if req.InsertDate != nil {
+				if strings.Contains(req.InsertDate.DateElementProperties.Timestamp, "2025-03") {
+					t.Error("non-leap Feb 29 should fall back, not normalize to March")
+				}
+			}
+		}
+	})
+
+	t.Run("non-numeric date falls back", func(t *testing.T) {
+		cell := tableCell{segments: []markdownSegment{{isDateField: true, dateValue: "abc-01-01"}}}
+		reqs := populateTableCell(&cell, 5)
+		for _, req := range reqs {
+			if req.InsertDate != nil {
+				if strings.Contains(req.InsertDate.DateElementProperties.Timestamp, "0000") {
+					t.Error("non-numeric date should fall back, not use year 0000")
+				}
+			}
+		}
+	})
+}
+
 func TestEmptyDelimiterPairs(t *testing.T) {
 	allText := func(segments []markdownSegment) string {
 		var s string

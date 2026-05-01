@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1721,24 +1720,13 @@ func populateTableCell(cell *tableCell, cellStartIndex int64) []*docs.Request {
 
 		// Handle date chips
 		if seg.isDateField {
-			// Parse the date value and create RFC3339 timestamp
 			var timestamp string
 			if seg.dateValue == "" {
-				// @today - RFC3339 format ending with Z (required by protobuf Timestamp)
+				timestamp = time.Now().UTC().Format(time.RFC3339)
+			} else if specificDate, err := time.Parse("2006-01-02", seg.dateValue); err != nil {
 				timestamp = time.Now().UTC().Format(time.RFC3339)
 			} else {
-				// @date(YYYY-MM-DD) - parse and format as RFC3339 with Z suffix
-				dateParts := strings.Split(seg.dateValue, "-")
-				if len(dateParts) == 3 {
-					year, _ := strconv.Atoi(dateParts[0])
-					month, _ := strconv.Atoi(dateParts[1])
-					day, _ := strconv.Atoi(dateParts[2])
-					specificDate := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-					timestamp = specificDate.UTC().Format(time.RFC3339)
-				} else {
-					// Invalid date format, fall back to current date
-					timestamp = time.Now().UTC().Format(time.RFC3339)
-				}
+				timestamp = specificDate.UTC().Format(time.RFC3339)
 			}
 
 			// Insert the date chip
@@ -2065,21 +2053,11 @@ func convertMarkdownToRequests(segments []markdownSegment, startIndex int64) []*
 
 			var timestamp string
 			if seg.dateValue == "" {
-				// @today - RFC3339 format ending with Z (required by protobuf Timestamp)
+				timestamp = time.Now().UTC().Format(time.RFC3339)
+			} else if specificDate, err := time.Parse("2006-01-02", seg.dateValue); err != nil {
 				timestamp = time.Now().UTC().Format(time.RFC3339)
 			} else {
-				// @date(YYYY-MM-DD) - parse and format as RFC3339 with Z suffix
-				dateParts := strings.Split(seg.dateValue, "-")
-				if len(dateParts) == 3 {
-					year, _ := strconv.Atoi(dateParts[0])
-					month, _ := strconv.Atoi(dateParts[1])
-					day, _ := strconv.Atoi(dateParts[2])
-					specificDate := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-					timestamp = specificDate.UTC().Format(time.RFC3339)
-				} else {
-					// Invalid date format, fall back to current date
-					timestamp = time.Now().UTC().Format(time.RFC3339)
-				}
+				timestamp = specificDate.UTC().Format(time.RFC3339)
 			}
 
 			// Delete the placeholder text
