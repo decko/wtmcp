@@ -74,13 +74,13 @@ small documents where you need the content inline.
 ```
 drive_export_google_doc_text(file_id="1abc...")
 ```
-Saves to `./drive/<file_id>.txt`, returns path and stats.
+Saves to `wtmcp/google-drive/<file_id>.txt`, returns path and stats.
 
 **Export as Markdown (preserves formatting):**
 ```
 drive_export_google_doc_markdown(file_id_or_url="1abc...")
 ```
-Saves to `./drive/<title>.md`. Accepts file ID or URL.
+Saves to `wtmcp/google-drive/<title>.md`. Accepts file ID or URL.
 
 **Export a Sheet as CSV:**
 ```

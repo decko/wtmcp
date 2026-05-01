@@ -10,23 +10,29 @@ import (
 
 var reUnsafeFileChars = regexp.MustCompile(`[<>:"/\\|?*]`)
 
-// saveExportFile saves exported content to a local file.
-// If outputPath is empty, saves to ./drive/<title>.md.
+// saveExportFile saves exported content to a local file under outputDir.
 func saveExportFile(title, outputPath, content string) (string, error) {
-	baseDir := "drive"
+	if outputDir == "" {
+		return "", fmt.Errorf("save requires a configured output directory")
+	}
+
+	absBase, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output dir: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(absBase); err == nil {
+		absBase = resolved
+	}
+	baseDir := absBase
 
 	if outputPath == "" {
 		safeTitle := reUnsafeFileChars.ReplaceAllString(title, "_")
 		safeTitle = filepath.Base(safeTitle)
 		outputPath = filepath.Join(baseDir, safeTitle+".md")
+	} else if !filepath.IsAbs(outputPath) {
+		outputPath = filepath.Join(baseDir, outputPath)
 	}
 
-	// Validate that the resolved path stays within the base directory.
-	// This must happen before any filesystem side effects.
-	absBase, err := filepath.Abs(baseDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve base dir: %w", err)
-	}
 	absOutput, err := filepath.Abs(outputPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve output path: %w", err)
@@ -40,9 +46,18 @@ func saveExportFile(title, outputPath, content string) (string, error) {
 		return "", fmt.Errorf("create output dir: %w", err)
 	}
 
-	if err := os.WriteFile(absOutput, []byte(content), 0o600); err != nil {
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output dir: %w", err)
+	}
+	finalOutput := filepath.Join(resolvedDir, filepath.Base(absOutput))
+	if !strings.HasPrefix(finalOutput, absBase+string(os.PathSeparator)) {
+		return "", fmt.Errorf("output path escapes base directory after resolution: %s", outputPath)
+	}
+
+	if err := os.WriteFile(finalOutput, []byte(content), 0o600); err != nil {
 		return "", err
 	}
 
-	return absOutput, nil
+	return finalOutput, nil
 }

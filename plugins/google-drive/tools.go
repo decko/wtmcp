@@ -233,7 +233,7 @@ func exportFileToLocal(fileID, mimeType, outputPath, ext string) (any, error) {
 	content := string(buf)
 
 	if outputPath == "" {
-		outputPath = fmt.Sprintf("drive/%s%s", fileID, ext)
+		outputPath = fmt.Sprintf("%s%s", fileID, ext)
 	}
 	savedPath, err := saveExportFile("", outputPath, content)
 	if err != nil {

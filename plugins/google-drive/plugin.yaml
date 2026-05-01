@@ -110,7 +110,7 @@ tools:
         description: "Save to local file (default: true)"
       output_path:
         type: string
-        description: "Custom output path (default: ./drive/<title>.md)"
+        description: "Custom output path (default: wtmcp/google-drive/<title>.md)"
 
   - name: drive_search_files
     access: read

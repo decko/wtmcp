@@ -14,7 +14,10 @@ import (
 	"github.com/LeGambiArt/wtmcp/pkg/handler"
 )
 
-var driveSvc *drive.Service
+var (
+	driveSvc  *drive.Service
+	outputDir string
+)
 
 func main() {
 	p := handler.New()
@@ -45,6 +48,7 @@ func main() {
 			return fmt.Errorf("drive service: %w", err)
 		}
 		driveSvc = svc
+		outputDir = cfg["_output_dir"]
 		return nil
 	})
 
