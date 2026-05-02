@@ -136,10 +136,11 @@ audit:
 
 ### Prompt Injection Defense
 
-- **MCP Elicitation** (opt-in via `security.elicitation`) prompts
-  the user for confirmation before executing any write tool. The
-  confirmation message shows the tool name and scrubbed parameters.
-  Clients that lack elicitation support fall through gracefully
+- **MCP Elicitation** (enabled by default) prompts the user for
+  confirmation before executing any write tool. The confirmation
+  message shows the tool name and scrubbed parameters. Clients
+  that lack elicitation support fall through gracefully. Disable
+  with `security.elicitation: false`
 - **Output framing** (opt-in via `security.tag_tool_output`) with
   per-session cryptographic nonce — injected tags in plugin output
   are detected and escaped
