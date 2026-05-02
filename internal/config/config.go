@@ -158,6 +158,10 @@ func DefaultConfig() *Config {
 				Backoff: "exponential",
 				RetryOn: []int{500, 502, 503, 504},
 			},
+			RateLimit: RateLimitConfig{
+				Default: "120/m",
+				Global:  "600/m",
+			},
 		},
 		Cache: CacheConfig{
 			Backend:             "memory",
