@@ -189,17 +189,17 @@ func saveToken(path string, tok *oauth2.Token) error {
 		tj.Expiry = tok.Expiry.Format(time.RFC3339)
 	}
 
-	data, err := json.MarshalIndent(tj, "", "  ")
+	data, err := json.MarshalIndent(tj, "", "  ") //nolint:gosec // token is encrypted before writing
 	if err != nil {
 		return err
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil { //nolint:gosec // path validated by resolveCredentialPath
 		return fmt.Errorf("create token dir: %w", err)
 	}
 
-	return os.WriteFile(path, data, 0o600)
+	return os.WriteFile(path, data, 0o600) //nolint:gosec
 }
 
 // credentialsJSON represents the Google OAuth2 client credentials file.

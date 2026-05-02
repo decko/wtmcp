@@ -399,7 +399,7 @@ func TestMultipartFileUpload(t *testing.T) {
 		if !strings.HasPrefix(ct, "multipart/form-data") {
 			t.Fatalf("Content-Type = %q, want multipart/form-data", ct)
 		}
-		if err := r.ParseMultipartForm(10 << 20); err != nil {
+		if err := r.ParseMultipartForm(10 << 20); err != nil { //nolint:gosec // test server
 			t.Fatalf("ParseMultipartForm: %v", err)
 		}
 		file, header, err := r.FormFile("file")
@@ -448,10 +448,10 @@ func TestMultipartFileUpload(t *testing.T) {
 
 func TestMultipartTextField(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseMultipartForm(10 << 20); err != nil {
+		if err := r.ParseMultipartForm(10 << 20); err != nil { //nolint:gosec // test server
 			t.Fatalf("ParseMultipartForm: %v", err)
 		}
-		comment := r.FormValue("comment")
+		comment := r.FormValue("comment") //nolint:gosec // test server
 		if comment != "test comment" {
 			t.Errorf("comment = %q, want 'test comment'", comment)
 		}

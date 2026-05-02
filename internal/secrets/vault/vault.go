@@ -151,7 +151,7 @@ func pkcs7Pad(data []byte, blockSize int) []byte {
 	padded := make([]byte, len(data)+padding)
 	copy(padded, data)
 	for i := len(data); i < len(padded); i++ {
-		padded[i] = byte(padding)
+		padded[i] = byte(padding) //nolint:gosec // padding is 1-16, safe for byte
 	}
 	return padded
 }

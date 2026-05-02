@@ -18,7 +18,7 @@ func Create(name string) (*SecureFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("memfd_create: %w", err)
 	}
-	f := os.NewFile(uintptr(fd), name)
+	f := os.NewFile(uintptr(fd), name) //nolint:gosec // fd from kernel syscall
 	return &SecureFile{
 		fd:   f,
 		path: fmt.Sprintf("/proc/self/fd/%d", fd),
@@ -33,7 +33,7 @@ func CreateCloexec(name string) (*SecureFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("memfd_create: %w", err)
 	}
-	f := os.NewFile(uintptr(fd), name)
+	f := os.NewFile(uintptr(fd), name) //nolint:gosec // fd from kernel syscall
 	return &SecureFile{
 		fd:   f,
 		path: fmt.Sprintf("/proc/self/fd/%d", fd),

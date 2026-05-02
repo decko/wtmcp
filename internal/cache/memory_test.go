@@ -438,7 +438,7 @@ func TestConcurrencyStress(t *testing.T) { //nolint:revive // t required by test
 			defer wg.Done()
 			ns := "ns"
 			for i := range 100 {
-				key := strings.Repeat("k", 1) + string(rune('a'+id)) + string(rune('0'+i%10))
+				key := fmt.Sprintf("k%c%d", rune('a'+id), i%10)                //nolint:gosec // id is [0,9]
 				s.Set(ctx, ns, key, json.RawMessage(`1`), 50*time.Millisecond) //nolint:errcheck,gosec
 				s.Get(ctx, ns, key)                                            //nolint:errcheck,gosec
 				if i%3 == 0 {

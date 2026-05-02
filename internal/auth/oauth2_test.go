@@ -24,7 +24,7 @@ func TestOAuth2ProviderLoadToken(t *testing.T) {
 		RefreshToken: "refresh-456",
 		Expiry:       time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 	}
-	data, _ := json.Marshal(token)
+	data, _ := json.Marshal(token) //nolint:gosec // test data
 	tokenFile := filepath.Join(dir, "token.json")
 	if err := os.WriteFile(tokenFile, data, 0o600); err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestOAuth2ProviderExpiredNoRefresh(t *testing.T) {
 		TokenType:   "Bearer",
 		Expiry:      time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
 	}
-	data, _ := json.Marshal(token)
+	data, _ := json.Marshal(token) //nolint:gosec // test data
 	tokenFile := filepath.Join(dir, "token.json")
 	if err := os.WriteFile(tokenFile, data, 0o600); err != nil {
 		t.Fatal(err)

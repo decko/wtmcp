@@ -99,14 +99,14 @@ func (r *RefreshTokenProvider) refresh(ctx context.Context) error {
 		"refresh_token": {r.refreshToken},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.tokenURL,
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.tokenURL, //nolint:gosec // tokenURL from validated config
 		strings.NewReader(form.Encode()))
 	if err != nil {
 		return fmt.Errorf("refresh_token: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := r.client.Do(req)
+	resp, err := r.client.Do(req) //nolint:gosec
 	if err != nil {
 		return fmt.Errorf("refresh_token: request failed: %w", err)
 	}

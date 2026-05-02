@@ -129,8 +129,8 @@ func SafeTransportWithTLS(allowPrivate bool, tlsCfg TLSConfig) (*http.Transport,
 	// Skip hostname verification but still verify certificate chain.
 	// This is safer than bare InsecureSkipVerify which skips everything.
 	if tlsCfg.SkipHostnameVerify {
-		goTLS.InsecureSkipVerify = true //nolint:gosec // hostname skip with chain verification below
-		goTLS.VerifyPeerCertificate = makeChainVerifier(caPool)
+		goTLS.InsecureSkipVerify = true                         //nolint:gosec // hostname skip with chain verification below
+		goTLS.VerifyPeerCertificate = makeChainVerifier(caPool) //nolint:gosec // intentional: hostname skip with full chain verification
 	}
 
 	transport.TLSClientConfig = goTLS

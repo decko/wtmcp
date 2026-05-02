@@ -141,7 +141,7 @@ func saveToken(path string, tok *oauth2.Token) error {
 		tj.Expiry = tok.Expiry.Format(time.RFC3339)
 	}
 
-	data, err := json.MarshalIndent(tj, "", "  ")
+	data, err := json.MarshalIndent(tj, "", "  ") //nolint:gosec // token is encrypted before writing
 	if err != nil {
 		return err
 	}

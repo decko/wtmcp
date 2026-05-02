@@ -19,14 +19,14 @@ import (
 func newTestServer(t *testing.T, handler func(grant, clientID, refresh string) (any, int)) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
+		if err := r.ParseForm(); err != nil { //nolint:gosec // test server
 			http.Error(w, "bad form", http.StatusBadRequest)
 			return
 		}
 		body, status := handler(
-			r.FormValue("grant_type"),
-			r.FormValue("client_id"),
-			r.FormValue("refresh_token"),
+			r.FormValue("grant_type"),    //nolint:gosec
+			r.FormValue("client_id"),     //nolint:gosec
+			r.FormValue("refresh_token"), //nolint:gosec
 		)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)

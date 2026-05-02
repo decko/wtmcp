@@ -437,13 +437,13 @@ func composeMIME(to, subject, body, cc, bcc string) string {
 
 	buf.WriteString("MIME-Version: 1.0\r\n")
 	buf.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
-	buf.WriteString(fmt.Sprintf("To: %s\r\n", formatAddress(to)))
-	buf.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	fmt.Fprintf(&buf, "To: %s\r\n", formatAddress(to))
+	fmt.Fprintf(&buf, "Subject: %s\r\n", subject)
 	if cc != "" {
-		buf.WriteString(fmt.Sprintf("Cc: %s\r\n", formatAddress(cc)))
+		fmt.Fprintf(&buf, "Cc: %s\r\n", formatAddress(cc))
 	}
 	if bcc != "" {
-		buf.WriteString(fmt.Sprintf("Bcc: %s\r\n", formatAddress(bcc)))
+		fmt.Fprintf(&buf, "Bcc: %s\r\n", formatAddress(bcc))
 	}
 	buf.WriteString("\r\n")
 	buf.WriteString(body)

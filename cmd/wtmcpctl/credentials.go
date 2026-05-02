@@ -102,13 +102,13 @@ func openBrowser(url string) error {
 
 	var cmd *exec.Cmd
 
-	switch runtime.GOOS {
+	switch runtime.GOOS { //nolint:gosec // fixed commands with user-provided URL
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", url) //nolint:gosec
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", url) //nolint:gosec
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", url)
+		cmd = exec.Command("cmd", "/c", "start", url) //nolint:gosec
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}

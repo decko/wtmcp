@@ -142,14 +142,14 @@ func (s *SPNEGORoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 		select {
 		case r := <-ch:
 			if r.err != nil {
-				log.Printf("kerberos: proactive SPNEGO skipped for %s: %v",
+				log.Printf("kerberos: proactive SPNEGO skipped for %s: %v", //nolint:gosec // hostname from parsed URL
 					hostname, r.err)
 				s.skipHosts.Store(hostname, skipEntry{when: time.Now()})
 			} else {
 				authReq.Header.Set("Authorization", "Negotiate "+r.token)
 			}
 		case <-time.After(s.proactiveTimeout):
-			log.Printf("kerberos: proactive SPNEGO timed out after %s for %s",
+			log.Printf("kerberos: proactive SPNEGO timed out after %s for %s", //nolint:gosec
 				s.proactiveTimeout, hostname)
 			s.skipHosts.Store(hostname, skipEntry{when: time.Now(), timeout: true})
 		case <-req.Context().Done():
@@ -169,13 +169,13 @@ func (s *SPNEGORoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 
 	// 401 received — check for Negotiate challenge
 	authHeader := resp.Header.Get("WWW-Authenticate")
-	log.Printf("kerberos: 401 received for %s, WWW-Authenticate: %q", hostname, authHeader)
+	log.Printf("kerberos: 401 received for %s, WWW-Authenticate: %q", hostname, authHeader) //nolint:gosec
 	if !strings.Contains(authHeader, "Negotiate") {
-		log.Printf("kerberos: no Negotiate challenge for %s", hostname)
+		log.Printf("kerberos: no Negotiate challenge for %s", hostname) //nolint:gosec
 		return resp, nil
 	}
 
-	log.Printf("kerberos: Negotiate challenge found for %s, attempting reactive fallback", hostname)
+	log.Printf("kerberos: Negotiate challenge found for %s, attempting reactive fallback", hostname) //nolint:gosec
 	// Reactive fallback: server wants challenge-response.
 	// Creates a fresh GSSAPI context (standard for HTTP SPNEGO).
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -187,14 +187,14 @@ func (s *SPNEGORoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	}
 
 	if err := SetSPNEGOHeader(retryReq, spn); err != nil {
-		log.Printf("kerberos: SPNEGO failed for %s after 401: %v",
+		log.Printf("kerberos: SPNEGO failed for %s after 401: %v", //nolint:gosec
 			hostname, err)
 		fallbackReq := req.Clone(req.Context())
 		_ = resetBody(fallbackReq, req)
 		return s.next.RoundTrip(fallbackReq)
 	}
 
-	log.Printf("kerberos: reactive auth for %s after 401", hostname)
+	log.Printf("kerberos: reactive auth for %s after 401", hostname) //nolint:gosec
 	return s.next.RoundTrip(retryReq)
 }
 

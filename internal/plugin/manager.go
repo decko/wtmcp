@@ -1083,8 +1083,8 @@ func (m *Manager) buildShadowCredentialsDir(pluginName, originalDir string) (str
 	}
 
 	shadowDir := filepath.Join(base, "wtmcp-shadow", pluginName)
-	_ = os.RemoveAll(shadowDir)
-	if err := os.MkdirAll(shadowDir, 0o700); err != nil {
+	_ = os.RemoveAll(shadowDir)                           //nolint:gosec // shadowDir under XDG_RUNTIME_DIR
+	if err := os.MkdirAll(shadowDir, 0o700); err != nil { //nolint:gosec
 		return "", fmt.Errorf("create shadow dir: %w", err)
 	}
 	m.secureTracker.TrackDirForPlugin(pluginName, shadowDir)
