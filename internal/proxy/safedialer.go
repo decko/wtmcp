@@ -62,7 +62,7 @@ func checkIP(ipStr string) error {
 	}
 
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		ip.IsMulticast() || ip.IsUnspecified() {
 		return fmt.Errorf("resolves to private/loopback address %s", ipStr)
 	}
 
@@ -70,7 +70,8 @@ func checkIP(ipStr string) error {
 	// IPv4 ranges against 4-byte IPs. A 16-byte representation like
 	// ::ffff:10.0.0.1 would slip through the check above.
 	if ipv4 := ip.To4(); ipv4 != nil && len(ip) == net.IPv6len {
-		if ipv4.IsLoopback() || ipv4.IsPrivate() || ipv4.IsLinkLocalUnicast() || ipv4.IsUnspecified() {
+		if ipv4.IsLoopback() || ipv4.IsPrivate() || ipv4.IsLinkLocalUnicast() ||
+			ipv4.IsMulticast() || ipv4.IsUnspecified() {
 			return fmt.Errorf("resolves to private/loopback address %s", ipStr)
 		}
 	}
