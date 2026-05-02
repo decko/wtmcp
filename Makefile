@@ -1,4 +1,4 @@
-.PHONY: all build plugins test lint fmt vet tidy clean help
+.PHONY: all build build-sandbox plugins test test-sandbox lint fmt vet tidy clean help
 
 # Go toolchain version — must match CI (prevents go.mod bumps from newer local Go)
 GO_TOOLCHAIN_VERSION := 1.24.3
@@ -23,6 +23,13 @@ wtmcpctl: $(shell find cmd/wtmcpctl -name '*.go') $(shell find internal -name '*
 	@echo "Building wtmcpctl..."
 	go build -ldflags "$(LDFLAGS)" -o wtmcpctl ./cmd/wtmcpctl
 
+# Build with sandbox support (requires libarapuca via pkg-config)
+build-sandbox: plugins
+	@echo "Building wtmcp (sandbox)..."
+	go build -tags sandbox -ldflags "$(LDFLAGS)" -o wtmcp ./cmd/wtmcp
+	@echo "Building wtmcpctl..."
+	go build -ldflags "$(LDFLAGS)" -o wtmcpctl ./cmd/wtmcpctl
+
 # Build all plugins that have a Makefile
 plugins:
 	@for dir in plugins/*/; do \
@@ -36,6 +43,11 @@ plugins:
 test:
 	@echo "Running tests..."
 	go test -v -race ./...
+
+# Run tests with sandbox tag (requires libarapuca)
+test-sandbox:
+	@echo "Running tests (sandbox)..."
+	go test -v -race -tags sandbox ./...
 
 # Run tests with coverage
 test-cover:
@@ -89,10 +101,12 @@ help:
 	@echo "Available targets:"
 	@echo "  all            - Build everything (default)"
 	@echo "  build          - Build all binaries and plugins"
+	@echo "  build-sandbox  - Build with sandbox support (requires libarapuca)"
 	@echo "  wtmcp          - Build wtmcp binary"
 	@echo "  wtmcpctl       - Build wtmcpctl binary"
 	@echo "  plugins        - Build all plugins with Makefiles"
 	@echo "  test           - Run tests"
+	@echo "  test-sandbox   - Run tests with sandbox tag (requires libarapuca)"
 	@echo "  test-cover     - Run tests with coverage report"
 	@echo "  lint           - Run golangci-lint"
 	@echo "  fmt            - Format code with gofmt"
