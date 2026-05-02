@@ -891,8 +891,10 @@ Attempting to access files outside these directories will fail with
 
 ## Security
 
-- Plugins are semi-trusted: they run with the same OS privileges as
-  the core. Only install plugins you trust.
+- Plugins are semi-trusted: without sandboxing they run with the
+  same OS privileges as the core. With sandbox enabled (`-tags
+  sandbox`), plugins are confined via Landlock, cgroups, and network
+  namespaces. Only install plugins you trust.
 - **User plugins** (in `{workdir}/plugins/`) are disabled by default.
   Enable with `user_plugins: true` in `config.yaml`. User plugins
   cannot override system plugins, declare `provides.auth`, or claim
