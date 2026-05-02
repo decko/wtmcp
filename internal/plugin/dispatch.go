@@ -67,6 +67,7 @@ func (h *Handle) Start(ctx context.Context) error {
 	h.process = NewProcess(h.manifest, h.handler, h.processCfg, h.groupVars)
 	h.process.sessionDir = h.sessionDir
 	h.process.outputDir = h.outputDir
+	h.process.resolvedConfig = h.resolvedConfig
 	if h.sbMgr != nil {
 		h.process.SetSandbox(h.sbMgr)
 	}

@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -38,6 +39,7 @@ type Process struct {
 	groupVars         map[string]string
 	sessionDir        string
 	outputDir         string
+	resolvedConfig    json.RawMessage // snapshot, avoids racing on manifest field
 	state             State
 	Resources         []protocol.ResourceDef // resources discovered at init
 	Domains           []string               // dynamic domains from init_ok
@@ -186,7 +188,7 @@ func (p *Process) doInit(ctx context.Context) error {
 	resp, err := p.Transport.SendAndWait(id, protocol.Message{
 		Type:     protocol.TypeInit,
 		Protocol: protocol.ProtocolVersion,
-		Config:   p.manifest.resolvedConfig,
+		Config:   p.resolvedConfig,
 	})
 	if err != nil {
 		p.kill()
