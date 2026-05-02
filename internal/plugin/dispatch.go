@@ -29,20 +29,21 @@ const (
 // Handle wraps a plugin process and serializes tool calls based on
 // the plugin's concurrency setting.
 type Handle struct {
-	process     *Process
-	manifest    *Manifest
-	handler     ServiceHandler
-	groupVars   map[string]string
-	processCfg  ProcessConfig
-	sbMgr       *sandbox.Manager
-	sessionDir  string
-	outputDir   string
-	mu          sync.Mutex   // serialize tool calls for concurrency:1
-	resMu       sync.RWMutex // protects resources
-	restartMu   sync.Mutex   // protects restarts slice
-	resources   []protocol.ResourceDef
-	toolTimeout time.Duration
-	restarts    []time.Time // timestamps of recent auto-restarts
+	process        *Process
+	manifest       *Manifest
+	handler        ServiceHandler
+	groupVars      map[string]string
+	processCfg     ProcessConfig
+	sbMgr          *sandbox.Manager
+	sessionDir     string
+	outputDir      string
+	resolvedConfig json.RawMessage // snapshot from preparePlugin, avoids racing on manifest field
+	mu             sync.Mutex      // serialize tool calls for concurrency:1
+	resMu          sync.RWMutex    // protects resources
+	restartMu      sync.Mutex      // protects restarts slice
+	resources      []protocol.ResourceDef
+	toolTimeout    time.Duration
+	restarts       []time.Time // timestamps of recent auto-restarts
 }
 
 // NewHandle creates a Handle for dispatching tool calls to a plugin.
@@ -173,7 +174,7 @@ func (h *Handle) callPersistent(ctx context.Context, toolName string, params jso
 		Type:   protocol.TypeToolCall,
 		Tool:   toolName,
 		Params: params,
-		Config: h.manifest.resolvedConfig,
+		Config: h.resolvedConfig,
 	}); err != nil {
 		return nil, &protocol.Error{Code: "send_failed", Message: err.Error()}
 	}
@@ -281,7 +282,7 @@ func (h *Handle) callOneshot(ctx context.Context, toolName string, params json.R
 		Type:   protocol.TypeToolCall,
 		Tool:   toolName,
 		Params: params,
-		Config: h.manifest.resolvedConfig,
+		Config: h.resolvedConfig,
 	}); err != nil {
 		return nil, fmt.Errorf("send tool_call: %w", err)
 	}

@@ -539,7 +539,9 @@ func (m *Manager) preparePlugin(name string) (*Handle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal config for %s: %w", name, err)
 	}
+	m.handlesMu.Lock()
 	manifest.SetResolvedConfig(cfgJSON)
+	m.handlesMu.Unlock()
 
 	// Register with proxy
 	vars := m.pluginVars(manifest)
@@ -670,6 +672,7 @@ func (m *Manager) preparePlugin(name string) (*Handle, error) {
 	}
 
 	handle := NewHandle(manifest, m.svcHandler, processCfg, m.cfg.Plugins.ToolCallTimeout, vars)
+	handle.resolvedConfig = cfgJSON
 	handle.sessionDir = m.sessionDir
 	if m.sessionDir != "" {
 		handle.outputDir = filepath.Join(m.sessionDir, "wtmcp", name)
@@ -801,12 +804,12 @@ func (m *Manager) ShutdownAll(ctx context.Context) {
 
 // CallTool dispatches a tool call to the appropriate plugin.
 func (m *Manager) CallTool(_ context.Context, toolName string) (string, *Handle) {
+	m.handlesMu.RLock()
+	defer m.handlesMu.RUnlock()
 	for name, manifest := range m.manifests {
 		for _, tool := range manifest.Tools {
 			if tool.Name == toolName {
-				m.handlesMu.RLock()
 				handle := m.handles[name]
-				m.handlesMu.RUnlock()
 				if handle == nil || !handle.IsReady() {
 					return name, nil
 				}
@@ -817,9 +820,15 @@ func (m *Manager) CallTool(_ context.Context, toolName string) (string, *Handle)
 	return "", nil
 }
 
-// Manifests returns all discovered manifests.
+// Manifests returns a snapshot of all discovered manifests.
 func (m *Manager) Manifests() map[string]*Manifest {
-	return m.manifests
+	m.handlesMu.RLock()
+	defer m.handlesMu.RUnlock()
+	snapshot := make(map[string]*Manifest, len(m.manifests))
+	for k, v := range m.manifests {
+		snapshot[k] = v
+	}
+	return snapshot
 }
 
 // DisabledPlugins returns a snapshot of plugins that were discovered
@@ -843,8 +852,8 @@ func (m *Manager) DisabledPlugins() map[string]DisabledPlugin {
 //
 // Caller must NOT hold handlesMu.
 func (m *Manager) disablePlugin(name, reason string) {
-	manifest := m.manifests[name]
 	m.handlesMu.Lock()
+	manifest := m.manifests[name]
 	m.disabled[name] = DisabledPlugin{
 		Name:     name,
 		Reason:   m.sanitizeReason(reason),
