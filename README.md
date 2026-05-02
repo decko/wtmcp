@@ -13,12 +13,15 @@ proxying, caching, and output encoding so plugins stay minimal.
 │                                                 │
 │  MCP Server ─── Plugin Manager ─── HTTP Proxy   │
 │  (mcp-go)       Discovery         Auth inject   │
-│                 Lifecycle          TLS verify   │
-│                 Dispatch           Rate limit   │
+│                 Lifecycle          SSRF protect │
+│                 Dispatch           TLS verify   │
+│                                    Rate limit   │
 │                                                 │
-│              Cache Store ─── Auth Providers     │
-│              (memory/fs)     Bearer, Basic,     │
-│                              Kerberos, OAuth2   │
+│  Audit Log ─── Cache Store ─── Auth Providers   │
+│  (JSON)        (memory/fs)     Bearer, Basic,   │
+│                                Kerberos, OAuth2 │
+│  Sandbox (optional)                             │
+│  Landlock + cgroups + netns                     │
 └────────┬──────────────────────────┬─────────────┘
          │ stdio (MCP/JSON-RPC)     │ stdin/stdout (JSON-lines)
     ┌────┴────┐               ┌─────┴──────────┐
@@ -44,6 +47,122 @@ proxying, caching, and output encoding so plugins stay minimal.
   discoverable via `tool_search` and called directly through MCP
 - **Encrypted credentials**: Ansible Vault encrypted env.d files,
   auto-detected and decrypted transparently at startup
+
+## Security
+
+wtmcp enforces security at the core level so plugins don't need to
+implement their own auth, input validation, or network restrictions.
+
+### HTTP Proxy & SSRF Prevention
+
+All plugin HTTP traffic goes through the core proxy. No plugin makes
+direct network connections.
+
+- **SSRF-safe dialer** validates resolved IPs at connection time —
+  blocks private, loopback, link-local, multicast, and IPv6-mapped
+  IPv4 addresses
+- **Domain allowlisting** per plugin — only declared domains are
+  reachable
+- **Credential stripping on cross-domain redirects** — Authorization,
+  Cookie, and API key headers are removed when redirected to a
+  different host
+- **Dangerous headers stripped** from plugin-crafted requests
+  (Host, Proxy-Authorization, X-Forwarded-For, etc.)
+- **HTTPS enforcement** for authenticated requests; mTLS support
+  with certificate chain verification
+- **Userinfo URL rejection** — `user:pass@host` URLs are blocked
+
+### Sandboxing (optional)
+
+Build with `-tags sandbox` to enable OS-level plugin isolation via
+[arapuca](https://github.com/sergio-correia/arapuca):
+
+- **Landlock LSM** filesystem confinement — plugins can only
+  read/write declared paths
+- **cgroup v2** resource limits — memory, CPU, PIDs, file size
+  (configurable per-plugin)
+- **Network namespace isolation** — plugins cannot make direct
+  connections; all traffic routes through the core proxy
+- **OOM detection** and resource usage reporting after process exit
+
+```bash
+# Build with sandbox support (requires libarapuca)
+make build-sandbox
+
+# Default build works without libarapuca
+make build
+```
+
+When sandbox is enabled in config but the binary lacks the tag,
+the server refuses to start with a clear error. When config uses
+the default (sandbox enabled implicitly), the server starts with
+a warning.
+
+### Rate Limiting
+
+Token-bucket rate limiting with configurable per-plugin, per-domain,
+and global limits. Defaults: 120 req/min per plugin, 600 req/min
+global.
+
+```yaml
+http:
+  rate_limit:
+    default: "120/m"
+    global: "600/m"
+    per_plugin:
+      jira: "60/m"
+    per_domain:
+      api.github.com: "30/m"
+```
+
+### Audit Logging
+
+Structured JSON audit log with UUIDv7 correlation IDs:
+
+- Tool call events: plugin, tool, parameters (scrubbed), duration
+- HTTP proxy events: method, host, path, status, response size
+- Credential scrubbing: field names (password, token, secret),
+  JWT detection (`eyJ` prefix), high-entropy string detection
+- Configurable output: file (0600 permissions) and/or stdout
+
+```yaml
+audit:
+  log_file: logs/audit.log
+  stdout: false
+  scrub_fields: [password, token, secret, api_key, authorization]
+```
+
+### Prompt Injection Defense
+
+- **Output framing** (opt-in via `security.tag_tool_output`) with
+  per-session cryptographic nonce — injected tags in plugin output
+  are detected and escaped
+- **MCP Audience annotation** set to `[assistant]` on all tool
+  results (always active)
+- **JSON Schema validation** on every tool call from compiled
+  plugin YAML
+- **Write tool convention**: included plugins default to
+  `dry_run=true` in their schemas, requiring explicit opt-out.
+  This is a plugin-level convention, not core-enforced
+- **Read-only mode** enforced at three layers: tool registration,
+  disabled stubs, and runtime rejection
+
+### Credential Isolation
+
+Plugin processes receive only the credentials they need.
+
+- **Scoped env.d** — each plugin receives only its credential
+  group's variables
+- **Filtered environment** — allowlist of safe system vars passed
+  to plugins (PATH, HOME, LANG, TZ, TMPDIR, XDG_* dirs, etc.)
+- **File permission enforcement** — env.d files and directories
+  require 0600/0700 (SSH-style)
+- **Symlink rejection** on credential files, CA certs, and env.d
+  entries
+- **Vault password zeroing** — decryption keys cleared from memory
+  after use (best-effort; Go's GC may retain copies)
+- **Memory-backed secure files** — decrypted credentials stored
+  via `memfd_create`, never touch disk
 
 ## Building and Running
 
@@ -446,6 +565,12 @@ Plugin authors mark key tools with `visibility: primary` in
 # Go core tests
 go test ./...
 
+# Go core tests with race detector
+go test -race ./...
+
+# Sandbox tests (requires libarapuca)
+make test-sandbox
+
 # Python plugin tests
 .venv/bin/pytest tests/ -v
 
@@ -460,6 +585,7 @@ cmd/
   wtmcp/                MCP server entry point
   wtmcpctl/             Plugin management CLI tool
 internal/
+  audit/                Structured JSON audit logging
   auth/                 Auth providers (bearer, basic, kerberos, oauth2)
   cache/                Key-value cache with TTL
   config/               Env var resolution, YAML config
@@ -467,8 +593,12 @@ internal/
   google/               Google OAuth helper (shared by Google plugins)
   plugin/               Manager, manifest, transport, dispatch
   protocol/             Wire protocol message types
-  proxy/                HTTP proxy with auth injection
-  server/               MCP server integration
+  proxy/                HTTP proxy with SSRF prevention
+  ratelimit/            Token-bucket rate limiting
+  sandbox/              OS-level plugin isolation (optional)
+  secrets/              Vault decryption, secure file descriptors
+  server/               MCP server, output framing, tool index
+  stats/                Per-tool call statistics
 plugins/
   google-drive/         Google Drive plugin (Go)
   google-calendar/      Google Calendar plugin (Go)
