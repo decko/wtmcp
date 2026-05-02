@@ -1,6 +1,8 @@
 package ratelimit
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -145,6 +147,26 @@ func TestPerKeyBeforeGlobal(t *testing.T) {
 	if d := r.Allow("other"); d != 0 {
 		t.Errorf("different key should be allowed (global not wasted), got delay %v", d)
 	}
+}
+
+func TestRegistryConcurrentAccess(t *testing.T) {
+	r, err := New("10/s", nil, "100/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("plugin-%d", i%5)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				r.Allow(key)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func TestBurstFor(t *testing.T) {
