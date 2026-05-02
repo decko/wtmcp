@@ -88,6 +88,7 @@ Tools declare parameters with JSON Schema types:
 | `number` | Float/integer |
 | `boolean` | true/false |
 | `array` | List (use `items.type` for element type) |
+| `object` | Nested JSON object |
 
 ### Tool Access Level
 
@@ -299,21 +300,45 @@ by `id`.
 ### Lifecycle (persistent plugins only)
 
 ```
-Core → Plugin:  {"id": "init", "type": "init", "config": {...}}
-Plugin → Core:  {"id": "init", "type": "init_ok"}
+Core → Plugin:  {"id": "init-1", "type": "init", "protocol": "1.0",
+                  "config": {"_session_dir": "/home/user/project",
+                             "_output_dir": "/home/user/project/wtmcp/myplugin",
+                             "_credentials_dir": "/home/user/.config/wtmcp/credentials/mygroup",
+                             "MY_API_URL": "https://api.example.com", ...}}
+Plugin → Core:  {"id": "init-1", "type": "init_ok"}
 ...tool calls...
-Core → Plugin:  {"id": "shutdown", "type": "shutdown"}
-Plugin → Core:  {"id": "shutdown", "type": "shutdown_ok"}
+Core → Plugin:  {"id": "shutdown-2", "type": "shutdown"}
+Plugin → Core:  {"id": "shutdown-2", "type": "shutdown_ok"}
 ```
+
+Message IDs are generated with a counter suffix (`init-1`,
+`req-2`, etc.). Handlers should echo back the received `id`.
+
+If the handler cannot initialize, respond with `init_error`:
+
+```json
+{"id": "init-1", "type": "init_error",
+ "error": {"code": "missing_config", "message": "MY_API_URL is required"}}
+```
+
+The `protocol` field contains the wire protocol version (`"1.0"`).
+The `config` object contains resolved environment variables and
+internal config values (`_session_dir`, `_output_dir`,
+`_credentials_dir`).
 
 ### Tool Calls
 
 ```
 Core → Plugin:  {"id": "req-1", "type": "tool_call", "tool": "my_tool",
-                  "params": {"query": "test"}}
+                  "params": {"query": "test"},
+                  "config": {"_session_dir": "...", "_output_dir": "...", ...}}
 Plugin → Core:  {"id": "req-1", "type": "tool_result",
                   "result": {"items": [...]}}
 ```
+
+The `config` field contains the same resolved configuration as the
+init `config`, refreshed on each call (picks up changes from
+`plugin_reload`).
 
 Error response:
 
@@ -386,7 +411,7 @@ When `no_auth` is set:
 For file uploads, use `multipart` instead of `body`:
 
 ```json
-{"id": "http-4", "type": "http_request",
+{"id": "http-5", "type": "http_request",
  "method": "POST", "path": "/api/upload",
  "multipart": [
    {"field": "file", "filename": "doc.pdf",
@@ -417,8 +442,54 @@ Plugin → Core:  {"id": "c-2", "type": "cache_set", "key": "my-data",
 Core → Plugin:  {"id": "c-2", "type": "cache_set", "ok": true}
 ```
 
-Other operations: `cache_del`, `cache_list` (glob pattern),
-`cache_flush` (clear namespace).
+Delete a key:
+
+```
+Plugin → Core:  {"id": "c-3", "type": "cache_del", "key": "item:123"}
+Core → Plugin:  {"id": "c-3", "type": "cache_del", "ok": true, "deleted": true}
+```
+
+List keys by glob pattern:
+
+```
+Plugin → Core:  {"id": "c-4", "type": "cache_list", "pattern": "item:*"}
+Core → Plugin:  {"id": "c-4", "type": "cache_list",
+                  "keys": ["item:123", "item:456"]}
+```
+
+Flush all keys in the plugin's namespace:
+
+```
+Plugin → Core:  {"id": "c-5", "type": "cache_flush"}
+Core → Plugin:  {"id": "c-5", "type": "cache_flush", "ok": true, "count": 42}
+```
+
+### Resources
+
+Plugins can provide MCP resources (read-only data accessible by
+the AI client). Declare `provides_resources: true` in `plugin.yaml`
+and respond to resource queries during init:
+
+```
+Core → Plugin:  {"id": "res-1", "type": "list_resources"}
+Plugin → Core:  {"id": "res-1", "type": "list_resources_ok",
+                  "resources": [
+                    {"uri": "plugin://myplugin/status",
+                     "name": "Plugin Status",
+                     "description": "Current plugin status",
+                     "mime_type": "application/json"}
+                  ]}
+```
+
+When a client reads a resource:
+
+```
+Core → Plugin:  {"id": "res-2", "type": "read_resource",
+                  "uri": "plugin://myplugin/status"}
+Plugin → Core:  {"id": "res-2", "type": "read_resource_ok",
+                  "content": "{\"status\": \"healthy\"}",
+                  "mime_type": "application/json"}
+```
 
 ## Complete Examples
 
@@ -809,6 +880,22 @@ handles credential injection automatically.
   and DELETE are rejected with `method_not_allowed`.
 - Cache namespaces are isolated — plugins cannot read other plugins'
   cached data.
+- **Sandboxing** (optional, `make build-sandbox`): Landlock
+  filesystem confinement restricts read/write to declared paths.
+  cgroup v2 resource limits cap memory, CPU, PIDs, and file size
+  per plugin. Network namespace isolation forces all traffic through
+  the core proxy.
+- **Rate limiting**: tool calls are rate-limited per plugin, and
+  HTTP proxy requests are rate-limited per target domain (defaults:
+  120 req/min, 600 req/min global). Configurable via `config.yaml`
+  under `http.rate_limit`.
+- **Audit logging**: all tool calls and HTTP requests are logged
+  with UUIDv7 correlation IDs. Credential fields are automatically
+  scrubbed from audit output.
+- **Output framing** (opt-in via `security.tag_tool_output`):
+  per-session nonce detects and escapes injected tags in plugin
+  output. MCP Audience annotation (`[assistant]`) is always set on
+  tool results.
 
 ## Security Guidelines for Plugin Authors
 
