@@ -363,6 +363,9 @@ func registerManagementTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg 
 				if !ok || name == "" {
 					return mcp.NewToolResultError("name is required"), nil
 				}
+				if err := plugin.ValidatePluginName(name); err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("invalid plugin name: %v", err)), nil
+				}
 				if err := ReloadPlugin(ctx, srv, mgr, cfg, name, index, collector, auditor, rateLimiter, framer); err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
