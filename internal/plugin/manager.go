@@ -578,6 +578,9 @@ func (m *Manager) preparePlugin(name string) (*Handle, error) {
 
 	// Load CA cert bytes once (TOCTOU prevention)
 	if tlsCfg.CACert != "" {
+		if err := config.RejectSymlink(tlsCfg.CACert); err != nil {
+			return nil, fmt.Errorf("[%s] ca_cert: %w", name, err)
+		}
 		pem, err := os.ReadFile(tlsCfg.CACert) //nolint:gosec // path from env.d (permission-checked)
 		if err != nil {
 			return nil, fmt.Errorf("[%s] read ca_cert %s: %w", name, tlsCfg.CACert, err)
