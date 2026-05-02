@@ -1465,3 +1465,75 @@ tools:
 
 	wg.Wait()
 }
+
+func TestCallToolDuringReload(t *testing.T) {
+	dir := t.TempDir()
+	envDir := filepath.Join(dir, "env.d")
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, "svc.env"),
+		[]byte("TOKEN=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	createPluginWithManifest(t, dir, "svc-plugin", `
+name: svc-plugin
+version: "1.0.0"
+description: "Service plugin"
+execution: persistent
+handler: ./handler.sh
+credential_group: svc
+tools:
+  - name: svc_tool
+    description: "a tool"
+`)
+
+	cfg := config.DefaultConfig()
+	authReg := auth.NewRegistry()
+	cacheStore := cache.NewMemoryStore()
+	p := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
+	m := NewManager(authReg, p, cacheStore, cfg, nil, nil, "",
+		dir, envDir, config.EnvLoadOptions{}, "")
+
+	if err := m.Discover([]string{dir}, ""); err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if err := m.LoadAll(context.Background()); err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	close(m.loadDone)
+
+	ctx := context.Background()
+	var wg sync.WaitGroup
+
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				m.CallTool(ctx, "svc_tool")
+			}
+		}()
+	}
+
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				_ = m.Reload(ctx, "svc-plugin")
+			}
+		}()
+	}
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = m.Manifests()
+		}()
+	}
+
+	wg.Wait()
+}
