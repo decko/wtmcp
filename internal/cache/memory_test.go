@@ -3,6 +3,9 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -176,4 +179,273 @@ func TestValidateKey(t *testing.T) {
 			t.Errorf("ValidateKey(%q) should fail", k)
 		}
 	}
+}
+
+// --- Size limits and LRU eviction tests ---
+
+func testStore(maxPerNS int, maxSize int64) *MemoryStore {
+	return NewMemoryStoreWithConfig(MemoryStoreConfig{
+		MaxEntriesPerPlugin: maxPerNS,
+		MaxEntrySize:        maxSize,
+	})
+}
+
+func TestMaxEntrySizeRejected(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(0, 100)
+
+	big := json.RawMessage(strings.Repeat("x", 101))
+	err := s.Set(ctx, "ns", "big", big, 0)
+	if err == nil {
+		t.Error("expected error for oversized entry")
+	}
+	if !strings.Contains(err.Error(), "max entry size") {
+		t.Errorf("expected size error, got: %v", err)
+	}
+}
+
+func TestMaxEntrySizeBoundary(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(0, 100)
+
+	exact := json.RawMessage(strings.Repeat("x", 100))
+	if err := s.Set(ctx, "ns", "exact", exact, 0); err != nil {
+		t.Errorf("value at exactly max size should succeed: %v", err)
+	}
+}
+
+func TestMaxEntriesEvictsLRU(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(3, 0)
+
+	for i, key := range []string{"a", "b", "c"} {
+		if err := s.Set(ctx, "ns", key, json.RawMessage(`1`), 0); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Duration(i+1) * time.Millisecond)
+	}
+
+	if err := s.Set(ctx, "ns", "d", json.RawMessage(`1`), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	_, hit, _ := s.Get(ctx, "ns", "a")
+	if hit {
+		t.Error("oldest entry 'a' should have been evicted")
+	}
+	_, hit, _ = s.Get(ctx, "ns", "d")
+	if !hit {
+		t.Error("new entry 'd' should exist")
+	}
+}
+
+func TestLRUAccessOrder(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(3, 0)
+
+	for i, key := range []string{"a", "b", "c"} {
+		if err := s.Set(ctx, "ns", key, json.RawMessage(`1`), 0); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Duration(i+1) * time.Millisecond)
+	}
+
+	// Access "a" to update its lastAccess — now "b" is the oldest
+	_, _, _ = s.Get(ctx, "ns", "a")
+	time.Sleep(time.Millisecond)
+
+	if err := s.Set(ctx, "ns", "d", json.RawMessage(`1`), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	_, hitA, _ := s.Get(ctx, "ns", "a")
+	_, hitB, _ := s.Get(ctx, "ns", "b")
+	if !hitA {
+		t.Error("recently-accessed 'a' should NOT be evicted")
+	}
+	if hitB {
+		t.Error("least-recently-accessed 'b' should be evicted")
+	}
+}
+
+func TestOverwriteDoesNotDoubleCount(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(3, 0)
+
+	s.Set(ctx, "ns", "key", json.RawMessage(`1`), 0) //nolint:errcheck,gosec
+	s.Set(ctx, "ns", "key", json.RawMessage(`2`), 0) //nolint:errcheck,gosec
+
+	s.mu.RLock()
+	count := s.nsCounts["ns"]
+	s.mu.RUnlock()
+
+	if count != 1 {
+		t.Errorf("overwrite should not double-count, got nsCounts=%d", count)
+	}
+}
+
+func TestNamespaceIsolationOnEviction(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(2, 0)
+
+	s.Set(ctx, "ns-a", "x", json.RawMessage(`1`), 0) //nolint:errcheck,gosec
+	s.Set(ctx, "ns-a", "y", json.RawMessage(`1`), 0) //nolint:errcheck,gosec
+	s.Set(ctx, "ns-b", "z", json.RawMessage(`1`), 0) //nolint:errcheck,gosec
+
+	// Trigger eviction in ns-a
+	s.Set(ctx, "ns-a", "w", json.RawMessage(`1`), 0) //nolint:errcheck,gosec
+
+	_, hit, _ := s.Get(ctx, "ns-b", "z")
+	if !hit {
+		t.Error("ns-b entry should not be affected by ns-a eviction")
+	}
+}
+
+func TestCleanupRemovesExpired(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(0, 0)
+
+	s.Set(ctx, "ns", "old", json.RawMessage(`1`), time.Millisecond) //nolint:errcheck,gosec
+	time.Sleep(2 * time.Millisecond)
+
+	s.cleanup()
+
+	_, hit, _ := s.Get(ctx, "ns", "old")
+	if hit {
+		t.Error("expired entry should be removed by cleanup")
+	}
+}
+
+func TestCleanupPreservesNonExpired(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(0, 0)
+
+	s.Set(ctx, "ns", "fresh", json.RawMessage(`1`), time.Hour) //nolint:errcheck,gosec
+
+	s.cleanup()
+
+	_, hit, _ := s.Get(ctx, "ns", "fresh")
+	if !hit {
+		t.Error("non-expired entry should survive cleanup")
+	}
+}
+
+func TestCleanupNoDoubleDecrement(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(0, 0)
+
+	s.Set(ctx, "ns", "expiring", json.RawMessage(`1`), time.Millisecond) //nolint:errcheck,gosec
+	time.Sleep(2 * time.Millisecond)
+
+	// Lazy-delete via Get
+	_, _, _ = s.Get(ctx, "ns", "expiring")
+	// Now call cleanup — entry already gone
+	s.cleanup()
+
+	s.mu.RLock()
+	count := s.nsCounts["ns"]
+	s.mu.RUnlock()
+
+	if count < 0 {
+		t.Errorf("nsCounts should not go negative, got %d", count)
+	}
+}
+
+func TestCloseDoubleClose(t *testing.T) { //nolint:revive // t required by test framework
+	s := NewMemoryStoreWithConfig(MemoryStoreConfig{
+		CleanupInterval: time.Hour,
+	})
+	s.Close() //nolint:errcheck,gosec
+	s.Close() //nolint:errcheck,gosec
+}
+
+func TestZeroConfigUnlimited(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore()
+
+	for i := range 100 {
+		key := fmt.Sprintf("key-%03d", i)
+		s.Set(ctx, "ns", key, json.RawMessage(`1`), 0) //nolint:errcheck,gosec
+	}
+
+	s.mu.RLock()
+	count := len(s.entries)
+	s.mu.RUnlock()
+
+	if count != 100 {
+		t.Errorf("unlimited store should hold all entries, got %d", count)
+	}
+}
+
+func TestNamespaceCountAfterDelFlush(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(0, 0)
+
+	s.Set(ctx, "ns", "a", json.RawMessage(`1`), 0) //nolint:errcheck,gosec
+	s.Set(ctx, "ns", "b", json.RawMessage(`1`), 0) //nolint:errcheck,gosec
+
+	s.Del(ctx, "ns", "a") //nolint:errcheck,gosec
+
+	s.mu.RLock()
+	count := s.nsCounts["ns"]
+	s.mu.RUnlock()
+	if count != 1 {
+		t.Errorf("after del, expected count 1, got %d", count)
+	}
+
+	s.Flush(ctx, "ns") //nolint:errcheck,gosec
+
+	s.mu.RLock()
+	count = s.nsCounts["ns"]
+	s.mu.RUnlock()
+	if count != 0 {
+		t.Errorf("after flush, expected count 0, got %d", count)
+	}
+}
+
+func TestExpireCleanupThenDel(t *testing.T) {
+	ctx := context.Background()
+	s := testStore(0, 0)
+
+	s.Set(ctx, "ns", "temp", json.RawMessage(`1`), time.Millisecond) //nolint:errcheck,gosec
+	time.Sleep(2 * time.Millisecond)
+
+	s.cleanup()
+
+	// Del on already-cleaned entry
+	existed, _ := s.Del(ctx, "ns", "temp")
+	if existed {
+		t.Error("entry should already be gone after cleanup")
+	}
+
+	s.mu.RLock()
+	count := s.nsCounts["ns"]
+	s.mu.RUnlock()
+
+	if count != 0 {
+		t.Errorf("nsCounts should be 0 after cleanup+del, got %d", count)
+	}
+}
+
+func TestConcurrencyStress(t *testing.T) { //nolint:revive // t required by test framework
+	ctx := context.Background()
+	s := testStore(50, 0)
+
+	var wg sync.WaitGroup
+	for g := range 10 {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			ns := "ns"
+			for i := range 100 {
+				key := strings.Repeat("k", 1) + string(rune('a'+id)) + string(rune('0'+i%10))
+				s.Set(ctx, ns, key, json.RawMessage(`1`), 50*time.Millisecond) //nolint:errcheck,gosec
+				s.Get(ctx, ns, key)                                            //nolint:errcheck,gosec
+				if i%3 == 0 {
+					s.Del(ctx, ns, key) //nolint:errcheck,gosec
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
 }

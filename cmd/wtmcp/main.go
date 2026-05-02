@@ -190,7 +190,11 @@ func run() error {
 		log.Println("kerberos/spnego auth available")
 	}
 
-	cacheStore := cache.NewMemoryStore()
+	cacheStore := cache.NewMemoryStoreWithConfig(cache.MemoryStoreConfig{
+		MaxEntriesPerPlugin: cfg.Cache.MaxEntriesPerPlugin,
+		MaxEntrySize:        cfg.Cache.MaxEntrySize,
+		CleanupInterval:     cfg.Cache.CleanupInterval,
+	})
 	httpProxy := proxy.New(nil, cfg.Plugins.MaxMessageSize, cfg.HTTP.Timeout)
 
 	mgr := plugin.NewManager(authReg, httpProxy, cacheStore, cfg, envResult.Groups, envResult.Errors, envResult.DirError, wd, envDir, envOpts, sessionDir)
@@ -285,6 +289,7 @@ func run() error {
 	go func() {
 		<-ctx.Done()
 		controlWatcher.Stop()
+		cacheStore.Close() //nolint:errcheck,gosec // best-effort on shutdown
 		if collector != nil {
 			collector.Close()
 		}
