@@ -253,7 +253,7 @@ func run() error {
 	}
 	httpProxy.SetRateLimiter(domainRL)
 
-	framer, err := server.NewOutputFramer(cfg.Security.TagToolOutput)
+	framer, err := server.NewOutputFramer(cfg.Security.TagToolOutputEnabled())
 	if err != nil {
 		return fmt.Errorf("output framer: %w", err)
 	}

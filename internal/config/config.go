@@ -109,7 +109,16 @@ type StatsConfig struct {
 
 // SecurityConfig controls prompt injection defense features.
 type SecurityConfig struct {
-	TagToolOutput bool `yaml:"tag_tool_output"`
+	TagToolOutput *bool `yaml:"tag_tool_output"`
+}
+
+// TagToolOutputEnabled returns whether tool output tagging is enabled
+// (default: true when not explicitly set).
+func (s SecurityConfig) TagToolOutputEnabled() bool {
+	if s.TagToolOutput == nil {
+		return true
+	}
+	return *s.TagToolOutput
 }
 
 // AuditConfig controls security audit logging.
