@@ -247,6 +247,10 @@ func Load(configPath, workdir string) (*Config, error) {
 		return nil, fmt.Errorf("tools.discovery must be 'full' or 'progressive', got %q", cfg.Tools.Discovery)
 	}
 
+	if cfg.HTTP.Retries.Max < 0 || cfg.HTTP.Retries.Max > 10 {
+		return nil, fmt.Errorf("http.retries.max must be 0-10, got %d", cfg.HTTP.Retries.Max)
+	}
+
 	if cfg.Stats.Tokenizer != "chars" {
 		return nil, fmt.Errorf("stats.tokenizer must be 'chars', got %q", cfg.Stats.Tokenizer)
 	}

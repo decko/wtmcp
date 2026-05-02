@@ -19,9 +19,13 @@ import (
 	"strings"
 	"time"
 
+	"math/rand"
+	"strconv"
+
 	"github.com/LeGambiArt/wtmcp/internal/audit"
 	"github.com/LeGambiArt/wtmcp/internal/auth"
 	"github.com/LeGambiArt/wtmcp/internal/auth/kerberos"
+	"github.com/LeGambiArt/wtmcp/internal/config"
 	"github.com/LeGambiArt/wtmcp/internal/protocol"
 	"github.com/LeGambiArt/wtmcp/internal/ratelimit"
 )
@@ -67,6 +71,8 @@ type Proxy struct {
 	maxBodySize   int64
 	auditor       *audit.Logger
 	rateLimiter   *ratelimit.Registry
+	retryConfig   config.RetryConfig
+	sleepFn       func(context.Context, time.Duration) error // nil → sleepContext
 }
 
 // New creates a Proxy with the given HTTP client and max response body size.
@@ -102,6 +108,11 @@ func (p *Proxy) SetAuditor(auditor *audit.Logger) {
 // SetRateLimiter configures per-domain rate limiting.
 func (p *Proxy) SetRateLimiter(rl *ratelimit.Registry) {
 	p.rateLimiter = rl
+}
+
+// SetRetryConfig configures HTTP retry behavior for transient errors.
+func (p *Proxy) SetRetryConfig(cfg config.RetryConfig) {
+	p.retryConfig = cfg
 }
 
 // AddAllowedDomains appends dynamically discovered domains to a
@@ -205,35 +216,74 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 			fmt.Sprintf("read-only tool cannot use %s method", method))
 	}
 
-	httpReq, err := p.buildRequest(ctx, fullURL, req)
-	if err != nil {
-		return errResponse(req.ID, "build_request", err.Error())
-	}
-
-	// Select HTTP client and inject auth.
+	// Select HTTP client (used for all attempts).
 	//
 	// no_auth bypasses Kerberos client and auth injection but keeps
 	// the TLS-aware client for HTTPS (custom CA / client certs).
 	// mTLS plugins cannot downgrade to HTTP via no_auth.
-	client := p.selectClient(pa, req.NoAuth)
-	if !req.NoAuth && pa.Provider != nil && pa.Client == nil {
-		if err := p.injectAuth(ctx, pa.Provider, httpReq); err != nil {
-			return errResponse(req.ID, "auth_failed", err.Error())
-		}
+	selectedClient := p.selectClient(pa, req.NoAuth)
+
+	maxRetries := p.retryConfig.Max
+	if maxRetries <= 0 || !isIdempotent(method) {
+		maxRetries = 0
 	}
 
-	resp, err := client.Do(httpReq)
-	if err != nil {
+	var resp *http.Response
+	var doErr error
+	var lastStatus int
+	var lastRetryAfter string
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := retryDelay(attempt, lastRetryAfter)
+			sleep := p.sleepFn
+			if sleep == nil {
+				sleep = sleepContext
+			}
+			if err := sleep(ctx, delay); err != nil {
+				return errResponse(req.ID, "request_cancelled", "retry cancelled")
+			}
+			log.Printf("[%s] retry %d/%d after %d from %s",
+				pluginName, attempt, maxRetries, lastStatus, fullURL)
+		}
+
+		httpReq, err := p.buildRequest(ctx, fullURL, req)
+		if err != nil {
+			return errResponse(req.ID, "build_request", err.Error())
+		}
+
+		if !req.NoAuth && pa.Provider != nil && pa.Client == nil {
+			if err := p.injectAuth(ctx, pa.Provider, httpReq); err != nil {
+				return errResponse(req.ID, "auth_failed", err.Error())
+			}
+		}
+
+		resp, doErr = selectedClient.Do(httpReq)
+		if doErr != nil {
+			break
+		}
+
+		if attempt < maxRetries && shouldRetry(resp.StatusCode, p.retryConfig.RetryOn) {
+			lastStatus = resp.StatusCode
+			lastRetryAfter = resp.Header.Get("Retry-After")
+			p.auditHTTP(ctx, pluginName, method, fullURL, resp.StatusCode, 0)
+			resp.Body.Close() //nolint:errcheck,gosec // best-effort before retry
+			continue
+		}
+		break
+	}
+
+	if doErr != nil {
 		code := "transport_error"
 		if ctx.Err() != nil {
 			code = "request_cancelled"
 		}
-		p.auditHTTP(ctx, pluginName, httpReq.Method, fullURL, 0, 0)
+		p.auditHTTP(ctx, pluginName, method, fullURL, 0, 0)
 		return protocol.Message{
 			ID:     req.ID,
 			Type:   protocol.TypeHTTPResponse,
 			Status: 0,
-			Error:  &protocol.Error{Code: code, Message: err.Error()},
+			Error:  &protocol.Error{Code: code, Message: doErr.Error()},
 		}
 	}
 	defer func() {
@@ -244,11 +294,11 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 
 	body, bodyEncoding, err := p.readBody(resp)
 	if err != nil {
-		p.auditHTTP(ctx, pluginName, httpReq.Method, fullURL, resp.StatusCode, 0)
+		p.auditHTTP(ctx, pluginName, method, fullURL, resp.StatusCode, 0)
 		return errResponse(req.ID, "response_too_large", err.Error())
 	}
 
-	p.auditHTTP(ctx, pluginName, httpReq.Method, fullURL, resp.StatusCode, int64(len(body)))
+	p.auditHTTP(ctx, pluginName, method, fullURL, resp.StatusCode, int64(len(body)))
 
 	return protocol.Message{
 		ID:           req.ID,
@@ -590,5 +640,72 @@ var dangerousHeaders = []string{
 func stripDangerousHeaders(req *http.Request) {
 	for _, h := range dangerousHeaders {
 		req.Header.Del(h)
+	}
+}
+
+// --- Retry helpers ---
+
+const (
+	maxBackoff    = 30 * time.Second
+	maxRetryAfter = 30 * time.Second
+)
+
+func isIdempotent(method string) bool {
+	switch method {
+	case "GET", "HEAD", "OPTIONS", "PUT", "DELETE":
+		return true
+	}
+	return false
+}
+
+func shouldRetry(status int, retryOn []int) bool {
+	for _, s := range retryOn {
+		if status == s {
+			return true
+		}
+	}
+	return false
+}
+
+func retryDelay(attempt int, retryAfter string) time.Duration {
+	if retryAfter != "" {
+		if secs, err := strconv.Atoi(retryAfter); err == nil && secs > 0 {
+			d := time.Duration(secs) * time.Second
+			if d > maxRetryAfter {
+				d = maxRetryAfter
+			}
+			return d
+		}
+		if t, err := http.ParseTime(retryAfter); err == nil {
+			d := time.Until(t)
+			if d <= 0 {
+				d = time.Second
+			}
+			if d > maxRetryAfter {
+				d = maxRetryAfter
+			}
+			return d
+		}
+	}
+	shift := attempt - 1
+	if shift > 4 {
+		shift = 4
+	}
+	base := time.Second << shift
+	if base > maxBackoff {
+		base = maxBackoff
+	}
+	jitter := time.Duration(rand.Int63n(int64(base)/2+1)) - base/4 //nolint:gosec // jitter does not need crypto-grade randomness
+	return base + jitter
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }

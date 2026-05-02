@@ -252,6 +252,7 @@ func run() error {
 		return fmt.Errorf("domain rate limiter: %w", err)
 	}
 	httpProxy.SetRateLimiter(domainRL)
+	httpProxy.SetRetryConfig(cfg.HTTP.Retries)
 
 	framer, err := server.NewOutputFramer(cfg.Security.TagToolOutputEnabled())
 	if err != nil {

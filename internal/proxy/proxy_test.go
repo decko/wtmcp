@@ -9,10 +9,13 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/LeGambiArt/wtmcp/internal/auth"
+	"github.com/LeGambiArt/wtmcp/internal/config"
 	"github.com/LeGambiArt/wtmcp/internal/protocol"
 )
 
@@ -1045,5 +1048,272 @@ func TestExecuteContextCancellation(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Execute did not return after context cancellation")
+	}
+}
+
+// --- Retry tests ---
+
+func retryProxy(client *http.Client, maxRetries int, retryOn []int) *Proxy {
+	p := newTestProxy(client)
+	p.SetRetryConfig(config.RetryConfig{
+		Max:     maxRetries,
+		Backoff: "exponential",
+		RetryOn: retryOn,
+	})
+	p.sleepFn = func(_ context.Context, _ time.Duration) error { return nil }
+	return p
+}
+
+func TestRetrySucceedsOnSecondAttempt(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(503)
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`{"ok":true}`)) //nolint:errcheck,gosec
+	}))
+	defer srv.Close()
+
+	p := retryProxy(srv.Client(), 3, []int{503})
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID:   "r1",
+		Type: protocol.TypeHTTPRequest,
+		Path: "/api/test",
+	})
+
+	if resp.Status != 200 {
+		t.Errorf("expected 200, got %d", resp.Status)
+	}
+	if attempts.Load() != 2 {
+		t.Errorf("expected 2 attempts, got %d", attempts.Load())
+	}
+}
+
+func TestRetryExhausted(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(503)
+	}))
+	defer srv.Close()
+
+	p := retryProxy(srv.Client(), 2, []int{503})
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID:   "r2",
+		Type: protocol.TypeHTTPRequest,
+		Path: "/api/test",
+	})
+
+	if resp.Status != 503 {
+		t.Errorf("expected 503, got %d", resp.Status)
+	}
+	if attempts.Load() != 3 {
+		t.Errorf("expected 3 attempts (1 + 2 retries), got %d", attempts.Load())
+	}
+}
+
+func TestRetryNotAppliedToPOST(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(503)
+	}))
+	defer srv.Close()
+
+	p := retryProxy(srv.Client(), 3, []int{503})
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID:     "r3",
+		Type:   protocol.TypeHTTPRequest,
+		Method: "POST",
+		Path:   "/api/test",
+	})
+
+	if resp.Status != 503 {
+		t.Errorf("expected 503, got %d", resp.Status)
+	}
+	if attempts.Load() != 1 {
+		t.Errorf("POST should not be retried, got %d attempts", attempts.Load())
+	}
+}
+
+func TestRetryContextCancellation(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(503)
+	}))
+	defer srv.Close()
+
+	p := retryProxy(srv.Client(), 3, []int{503})
+	p.sleepFn = func(_ context.Context, _ time.Duration) error {
+		return context.Canceled
+	}
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID:   "r4",
+		Type: protocol.TypeHTTPRequest,
+		Path: "/api/test",
+	})
+
+	if resp.Error == nil || resp.Error.Code != "request_cancelled" {
+		t.Errorf("expected request_cancelled, got %+v", resp.Error)
+	}
+}
+
+func TestRetryAfterHeaderRespected(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(503)
+	}))
+	defer srv.Close()
+
+	var recordedDelay time.Duration
+	p := retryProxy(srv.Client(), 1, []int{503})
+	p.sleepFn = func(_ context.Context, d time.Duration) error {
+		recordedDelay = d
+		return nil
+	}
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	p.Execute(context.Background(), "test", protocol.Message{
+		ID:   "r5",
+		Type: protocol.TypeHTTPRequest,
+		Path: "/api/test",
+	})
+
+	if recordedDelay != 5*time.Second {
+		t.Errorf("expected 5s delay from Retry-After, got %s", recordedDelay)
+	}
+}
+
+func TestRetryNonRetryableStatus(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(400)
+	}))
+	defer srv.Close()
+
+	p := retryProxy(srv.Client(), 3, []int{500, 502, 503, 504})
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID:   "r6",
+		Type: protocol.TypeHTTPRequest,
+		Path: "/api/test",
+	})
+
+	if resp.Status != 400 {
+		t.Errorf("expected 400, got %d", resp.Status)
+	}
+	if attempts.Load() != 1 {
+		t.Errorf("400 should not be retried, got %d attempts", attempts.Load())
+	}
+}
+
+func TestRetryDisabled(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(503)
+	}))
+	defer srv.Close()
+
+	p := retryProxy(srv.Client(), 0, []int{503})
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID:   "r7",
+		Type: protocol.TypeHTTPRequest,
+		Path: "/api/test",
+	})
+
+	if resp.Status != 503 {
+		t.Errorf("expected 503, got %d", resp.Status)
+	}
+	if attempts.Load() != 1 {
+		t.Errorf("max=0 should mean no retries, got %d attempts", attempts.Load())
+	}
+}
+
+func TestRetryBodyReplayedCorrectly(t *testing.T) {
+	var attempts atomic.Int32
+	var mu sync.Mutex
+	var lastBody string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		lastBody = string(b)
+		mu.Unlock()
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(503)
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`{"ok":true}`)) //nolint:errcheck,gosec
+	}))
+	defer srv.Close()
+
+	p := retryProxy(srv.Client(), 3, []int{503})
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	body, _ := json.Marshal(map[string]string{"key": "value"})
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID:     "r8",
+		Type:   protocol.TypeHTTPRequest,
+		Method: "PUT",
+		Path:   "/api/test",
+		Body:   body,
+	})
+
+	if resp.Status != 200 {
+		t.Errorf("expected 200, got %d", resp.Status)
+	}
+	if attempts.Load() != 2 {
+		t.Errorf("expected 2 attempts, got %d", attempts.Load())
+	}
+	mu.Lock()
+	gotBody := lastBody
+	mu.Unlock()
+	if !strings.Contains(gotBody, `"key":"value"`) && !strings.Contains(gotBody, `"key": "value"`) {
+		t.Errorf("body not replayed on retry, got: %s", gotBody)
+	}
+}
+
+func TestRetryDelay(t *testing.T) {
+	tests := []struct {
+		name       string
+		attempt    int
+		retryAfter string
+		minDelay   time.Duration
+		maxDelay   time.Duration
+	}{
+		{"attempt 1 backoff", 1, "", 750 * time.Millisecond, 1250 * time.Millisecond},
+		{"attempt 2 backoff", 2, "", 1500 * time.Millisecond, 2500 * time.Millisecond},
+		{"attempt 5 shift capped", 5, "", 12 * time.Second, 20 * time.Second},
+		{"attempt 10 same as 5", 10, "", 12 * time.Second, 20 * time.Second},
+		{"retry-after 5", 1, "5", 5 * time.Second, 5 * time.Second},
+		{"retry-after 0 falls to backoff", 1, "0", 750 * time.Millisecond, 1250 * time.Millisecond},
+		{"retry-after negative falls to backoff", 1, "-5", 750 * time.Millisecond, 1250 * time.Millisecond},
+		{"retry-after 999 capped", 1, "999", 30 * time.Second, 30 * time.Second},
+		{"retry-after invalid falls to backoff", 1, "not-a-number", 750 * time.Millisecond, 1250 * time.Millisecond},
+		{"retry-after http-date future capped", 1, time.Now().Add(2 * time.Minute).UTC().Format(http.TimeFormat), 29 * time.Second, 30 * time.Second},
+		{"retry-after http-date past floors to 1s", 1, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat), 1 * time.Second, 1 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := retryDelay(tt.attempt, tt.retryAfter)
+			if d < tt.minDelay || d > tt.maxDelay {
+				t.Errorf("retryDelay(%d, %q) = %s, want [%s, %s]",
+					tt.attempt, tt.retryAfter, d, tt.minDelay, tt.maxDelay)
+			}
+		})
 	}
 }
