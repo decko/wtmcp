@@ -36,6 +36,7 @@ type DisabledPlugin struct {
 
 // Manager discovers, loads, and manages plugin lifecycles.
 type Manager struct {
+	reloadMu       sync.Mutex
 	handlesMu      sync.RWMutex
 	handles        map[string]*Handle
 	manifests      map[string]*Manifest
@@ -707,20 +708,31 @@ func (m *Manager) Reload(ctx context.Context, name string) error {
 	// Wait for initial loading to complete before reloading.
 	m.WaitLoaded()
 
+	// Serialize reloads: the control watcher and MCP dispatch can
+	// both trigger Reload concurrently.
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+
 	// Re-read the env.d file for this plugin's credential group.
 	// This picks up vars added/changed since startup (e.g., by
 	// create_config writing IPA_CA_CERT to the env.d file).
+	//
+	// m.disabled, m.envGroups, and m.envErrors are also read by
+	// DisabledPlugins() under handlesMu.RLock, so writes here
+	// must hold handlesMu.Lock to avoid concurrent map access.
+	m.handlesMu.Lock()
 	var group string
 	if dp, ok := m.disabled[name]; ok {
 		group = dp.Manifest.CredentialGroup
 	} else if manifest, ok := m.manifests[name]; ok {
 		group = manifest.CredentialGroup
 	}
-	if group != "" && m.envDir != "" {
-		// Safe to access envDirError without a mutex: WaitLoaded()
-		// above guarantees LoadAll has completed, and MCP tool
-		// dispatch is single-threaded so Reload calls don't race.
-		if m.envDirError != "" {
+	needEnvReread := group != "" && m.envDir != ""
+	envDirErr := m.envDirError
+	m.handlesMu.Unlock()
+
+	if needEnvReread {
+		if envDirErr != "" {
 			dirInfo, err := os.Stat(m.envDir)
 			if err != nil {
 				return fmt.Errorf("env.d directory still has issues: %w", err)
@@ -728,20 +740,27 @@ func (m *Manager) Reload(ctx context.Context, name string) error {
 			if err := config.CheckPermissions(m.envDir, dirInfo); err != nil {
 				return fmt.Errorf("env.d directory still has issues: %w", err)
 			}
+			m.handlesMu.Lock()
 			m.envDirError = ""
+			m.handlesMu.Unlock()
 			log.Printf("[%s] env.d directory permissions fixed", name)
 		}
 
 		vars, err := config.LoadSingleEnvGroup(m.envDir, group, m.envLoadOpts)
+
+		m.handlesMu.Lock()
 		if err != nil {
 			if _, wasDisabled := m.disabled[name]; wasDisabled {
+				m.handlesMu.Unlock()
 				return fmt.Errorf("env group %s still has issues: %w", group, err)
 			}
+			m.handlesMu.Unlock()
 			log.Printf("[%s] warning: env group %s re-read failed: %v", name, group, err)
 		} else {
 			m.envGroups[group] = vars
 			delete(m.envErrors, group)
 			delete(m.disabled, name)
+			m.handlesMu.Unlock()
 			log.Printf("[%s] env group %s re-read (%d vars)", name, group, len(vars))
 		}
 	}
