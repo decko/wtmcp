@@ -1,8 +1,8 @@
+//go:build sandbox
+
 package sandbox
 
 import (
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -10,22 +10,9 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/config"
 )
 
-func testConfig() config.SandboxConfig {
-	return config.SandboxConfig{
-		Defaults: config.SandboxResourceLimits{
-			MaxMemoryMB:   512,
-			MaxCPUPct:     100,
-			MaxPIDs:       64,
-			MaxFileSizeMB: 100,
-		},
-	}
-}
-
 func TestBuildProfileReadPaths(t *testing.T) {
 	m := &Manager{
-		cfg:     testConfig(),
-		credDir: "/creds",
-		dataDir: "/data",
+		base: base{cfg: testConfig(), credDir: "/creds", dataDir: "/data"},
 	}
 
 	info := PluginInfo{
@@ -35,7 +22,7 @@ func TestBuildProfileReadPaths(t *testing.T) {
 		CredentialGroup: "gitlab",
 	}
 
-	profile := m.BuildProfile(info)
+	profile := m.buildProfile(info)
 
 	mustContain := []string{
 		"/opt/wtmcp/plugins/gitlab",
@@ -61,12 +48,11 @@ func TestBuildProfileReadPaths(t *testing.T) {
 
 func TestBuildProfileWritePaths(t *testing.T) {
 	m := &Manager{
-		cfg:     testConfig(),
-		dataDir: "/data",
+		base: base{cfg: testConfig(), dataDir: "/data"},
 	}
 
 	info := PluginInfo{Name: "test-plugin", Dir: "/plugins/test", Handler: "./handler"}
-	profile := m.BuildProfile(info)
+	profile := m.buildProfile(info)
 
 	if len(profile.WritePaths) != 2 {
 		t.Fatalf("WritePaths = %v, want 2 entries", profile.WritePaths)
@@ -84,11 +70,11 @@ func TestBuildProfileWritePaths(t *testing.T) {
 }
 
 func TestBuildProfileSessionDir(t *testing.T) {
-	m := &Manager{cfg: testConfig(), dataDir: "/data"}
+	m := &Manager{base: base{cfg: testConfig(), dataDir: "/data"}}
 
 	t.Run("included when set", func(t *testing.T) {
 		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler", SessionDir: "/home/user/project"}
-		profile := m.BuildProfile(info)
+		profile := m.buildProfile(info)
 		found := false
 		for _, p := range profile.ReadPaths {
 			if p == "/home/user/project" {
@@ -102,7 +88,7 @@ func TestBuildProfileSessionDir(t *testing.T) {
 
 	t.Run("excluded when empty", func(t *testing.T) {
 		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler"}
-		profile := m.BuildProfile(info)
+		profile := m.buildProfile(info)
 		for _, p := range profile.ReadPaths {
 			if p == "" {
 				t.Error("ReadPaths should not contain empty string")
@@ -112,11 +98,11 @@ func TestBuildProfileSessionDir(t *testing.T) {
 }
 
 func TestBuildProfileOutputDir(t *testing.T) {
-	m := &Manager{cfg: testConfig(), dataDir: "/data"}
+	m := &Manager{base: base{cfg: testConfig(), dataDir: "/data"}}
 
 	t.Run("included when set", func(t *testing.T) {
 		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler", OutputDir: "/home/user/project/wtmcp/test"}
-		profile := m.BuildProfile(info)
+		profile := m.buildProfile(info)
 		if len(profile.WritePaths) != 3 {
 			t.Fatalf("WritePaths = %v, want 3 entries (tmp + data + output)", profile.WritePaths)
 		}
@@ -127,39 +113,17 @@ func TestBuildProfileOutputDir(t *testing.T) {
 
 	t.Run("excluded when empty", func(t *testing.T) {
 		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler"}
-		profile := m.BuildProfile(info)
+		profile := m.buildProfile(info)
 		if len(profile.WritePaths) != 2 {
 			t.Fatalf("WritePaths = %v, want 2 entries (tmp + data only)", profile.WritePaths)
 		}
 	})
 }
 
-func TestPrepareDirsOutputDir(t *testing.T) {
-	tmpBase := t.TempDir()
-	dataBase := t.TempDir()
-	outDir := filepath.Join(t.TempDir(), "wtmcp", "test-plugin")
-
-	t.Setenv("TMPDIR", tmpBase)
-
-	m := &Manager{cfg: testConfig(), dataDir: dataBase}
-	_, _, err := m.PrepareDirs(PluginInfo{Name: "test-plugin", OutputDir: outDir})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(outDir); os.IsNotExist(err) {
-		t.Errorf("outputDir not created: %s", outDir)
-	}
-	info, _ := os.Stat(outDir)
-	if perm := info.Mode().Perm(); perm != 0o700 {
-		t.Errorf("outputDir permissions = %o, want 0700", perm)
-	}
-}
-
 func TestBuildProfileNetNS(t *testing.T) {
-	m := &Manager{cfg: testConfig(), dataDir: "/data"}
+	m := &Manager{base: base{cfg: testConfig(), dataDir: "/data"}}
 	info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler"}
-	profile := m.BuildProfile(info)
+	profile := m.buildProfile(info)
 
 	if !profile.UseNetNS {
 		t.Error("UseNetNS should always be true")
@@ -167,9 +131,9 @@ func TestBuildProfileNetNS(t *testing.T) {
 }
 
 func TestBuildProfileResourceDefaults(t *testing.T) {
-	m := &Manager{cfg: testConfig(), dataDir: "/data"}
+	m := &Manager{base: base{cfg: testConfig(), dataDir: "/data"}}
 	info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler"}
-	profile := m.BuildProfile(info)
+	profile := m.buildProfile(info)
 
 	if profile.MaxMemoryMB != 512 {
 		t.Errorf("MaxMemoryMB = %d, want 512", profile.MaxMemoryMB)
@@ -190,10 +154,10 @@ func TestBuildProfileResourceOverrides(t *testing.T) {
 	cfg.Plugins = map[string]config.SandboxResourceLimits{
 		"big-plugin": {MaxMemoryMB: 2048, MaxPIDs: 128},
 	}
-	m := &Manager{cfg: cfg, dataDir: "/data"}
+	m := &Manager{base: base{cfg: cfg, dataDir: "/data"}}
 
 	info := PluginInfo{Name: "big-plugin", Dir: "/p", Handler: "./handler"}
-	profile := m.BuildProfile(info)
+	profile := m.buildProfile(info)
 
 	if profile.MaxMemoryMB != 2048 {
 		t.Errorf("MaxMemoryMB = %d, want 2048 (override)", profile.MaxMemoryMB)
@@ -207,104 +171,16 @@ func TestBuildProfileResourceOverrides(t *testing.T) {
 }
 
 func TestBuildProfilePythonPlugin(t *testing.T) {
-	m := &Manager{cfg: testConfig(), dataDir: "/data"}
+	m := &Manager{base: base{cfg: testConfig(), dataDir: "/data"}}
 
 	goInfo := PluginInfo{Name: "go-plugin", Dir: "/p", Handler: "./handler"}
 	pyInfo := PluginInfo{Name: "py-plugin", Dir: "/p", Handler: "./handler.py"}
 
-	goProfile := m.BuildProfile(goInfo)
-	pyProfile := m.BuildProfile(pyInfo)
+	goProfile := m.buildProfile(goInfo)
+	pyProfile := m.buildProfile(pyInfo)
 
 	if len(pyProfile.ReadPaths) <= len(goProfile.ReadPaths) {
 		t.Error("Python plugin should have more ReadPaths than Go plugin (interpreter)")
-	}
-}
-
-func TestBuildProfileNoCredentialGroup(t *testing.T) {
-	m := &Manager{cfg: testConfig(), credDir: "/creds", dataDir: "/data"}
-	info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler"}
-
-	profile := m.BuildProfile(info)
-
-	for _, p := range profile.ReadPaths {
-		if strings.HasPrefix(p, "/creds") {
-			t.Errorf("ReadPaths should not include creds dir when no credential group: %v", p)
-		}
-	}
-}
-
-func TestPrepareDirs(t *testing.T) {
-	tmpBase := t.TempDir()
-	dataBase := t.TempDir()
-
-	t.Setenv("TMPDIR", tmpBase)
-
-	m := &Manager{cfg: testConfig(), dataDir: dataBase}
-	tmpDir, dataDir, err := m.PrepareDirs(PluginInfo{Name: "test-plugin"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(tmpDir); os.IsNotExist(err) {
-		t.Errorf("tmpdir not created: %s", tmpDir)
-	}
-	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
-		t.Errorf("datadir not created: %s", dataDir)
-	}
-
-	info, _ := os.Stat(dataDir)
-	if info.Mode().Perm() != 0o700 {
-		t.Errorf("datadir mode = %o, want 700", info.Mode().Perm())
-	}
-}
-
-func TestCleanupTmpDir(t *testing.T) {
-	tmpBase := t.TempDir()
-	t.Setenv("TMPDIR", tmpBase)
-
-	m := &Manager{cfg: testConfig(), dataDir: t.TempDir()}
-	_, _, err := m.PrepareDirs(PluginInfo{Name: "cleanup-test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	tmpDir := m.TmpDir("cleanup-test")
-	if _, err := os.Stat(tmpDir); os.IsNotExist(err) {
-		t.Fatal("tmpdir should exist before cleanup")
-	}
-
-	m.CleanupTmpDir("cleanup-test")
-
-	if _, err := os.Stat(tmpDir); !os.IsNotExist(err) {
-		t.Error("tmpdir should be removed after cleanup")
-	}
-}
-
-func TestSandboxConfigDefaults(t *testing.T) {
-	cfg := config.SandboxConfig{}
-	if !cfg.SandboxEnabled() {
-		t.Error("sandbox should be enabled by default (nil Enabled)")
-	}
-
-	enabled := true
-	cfg.Enabled = &enabled
-	if !cfg.SandboxEnabled() {
-		t.Error("sandbox should be enabled when Enabled=true")
-	}
-
-	disabled := false
-	cfg.Enabled = &disabled
-	if cfg.SandboxEnabled() {
-		t.Error("sandbox should be disabled when Enabled=false")
-	}
-}
-
-func TestIsPython(t *testing.T) {
-	if !isPython("./handler.py") {
-		t.Error("handler.py should be Python")
-	}
-	if isPython("./handler") {
-		t.Error("./handler should not be Python")
 	}
 }
 
@@ -315,4 +191,17 @@ func contains(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func TestBuildProfileNoCredentialGroup(t *testing.T) {
+	m := &Manager{base: base{cfg: testConfig(), credDir: "/creds", dataDir: "/data"}}
+	info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler"}
+
+	profile := m.buildProfile(info)
+
+	for _, p := range profile.ReadPaths {
+		if strings.HasPrefix(p, "/creds") {
+			t.Errorf("ReadPaths should not include creds dir when no credential group: %v", p)
+		}
+	}
 }

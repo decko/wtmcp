@@ -1,16 +1,13 @@
+//go:build sandbox
+
 // Package sandbox wraps go-arapuca to provide OS-level isolation
-// for plugin handler processes. All plugins are sandboxed unconditionally
-// (configurable only via sandbox.enabled for development).
-//
-// Sandbox profiles are derived from plugin manifests — plugins have
-// no control over their own security policy.
+// for plugin handler processes.
 package sandbox
 
 import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,10 +20,8 @@ import (
 
 // Manager manages sandboxed plugin process lifecycles.
 type Manager struct {
-	sb      *arapuca.Sandbox
-	cfg     config.SandboxConfig
-	credDir string
-	dataDir string
+	base
+	sb *arapuca.Sandbox
 }
 
 // NewManager creates a sandbox manager. credDir is the base
@@ -37,7 +32,10 @@ func NewManager(cfg config.SandboxConfig, credDir, dataDir string) (*Manager, er
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox: %w", err)
 	}
-	return &Manager{sb: sb, cfg: cfg, credDir: credDir, dataDir: dataDir}, nil
+	return &Manager{
+		base: base{cfg: cfg, credDir: credDir, dataDir: dataDir},
+		sb:   sb,
+	}, nil
 }
 
 // Close releases the sandbox resources.
@@ -47,18 +45,17 @@ func (m *Manager) Close() {
 	}
 }
 
-// Enabled returns whether sandboxing is active.
+// Enabled returns whether sandboxing is active per configuration.
 func (m *Manager) Enabled() bool {
 	return m.cfg.SandboxEnabled()
 }
 
-// BuildProfile constructs an arapuca Profile from plugin metadata
-// and server configuration. The profile grants:
-//   - Read: plugin dir, credential dir, system libs, /proc/self, devices
-//   - Write: per-plugin tmpdir and datadir
-//   - Network: isolated (UseNetNS=true, all traffic via core proxy)
-//   - Resources: memory, CPU, PIDs, file size from config
-func (m *Manager) BuildProfile(info PluginInfo) arapuca.Profile {
+// Available returns whether the binary was built with sandbox support.
+func (m *Manager) Available() bool { return true }
+
+// buildProfile constructs an arapuca Profile from plugin metadata
+// and server configuration.
+func (m *Manager) buildProfile(info PluginInfo) arapuca.Profile {
 	limits := m.limitsFor(info.Name)
 
 	read := systemReadPaths()
@@ -96,49 +93,10 @@ func (m *Manager) BuildProfile(info PluginInfo) arapuca.Profile {
 	}
 }
 
-// PrepareDirs creates the per-plugin tmpdir, datadir, and outputDir
-// with 0700 permissions. The outputDir is created only if set on
-// info. Landlock needs directories to exist to create path_beneath
-// rules. Safe to call multiple times.
-func (m *Manager) PrepareDirs(info PluginInfo) (tmpDir, dataDir string, err error) {
-	tmpDir = m.TmpDir(info.Name)
-	dataDir = m.DataDir(info.Name)
-
-	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
-		return "", "", fmt.Errorf("create tmpdir: %w", err)
-	}
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return "", "", fmt.Errorf("create datadir: %w", err)
-	}
-	if info.OutputDir != "" {
-		if err := os.MkdirAll(info.OutputDir, 0o700); err != nil {
-			return "", "", fmt.Errorf("create output dir: %w", err)
-		}
-	}
-	return tmpDir, dataDir, nil
-}
-
-// CleanupTmpDir removes the per-plugin tmpdir.
-func (m *Manager) CleanupTmpDir(pluginName string) {
-	if err := os.RemoveAll(m.TmpDir(pluginName)); err != nil {
-		log.Printf("[%s] cleanup tmpdir: %v", pluginName, err)
-	}
-}
-
-// TmpDir returns the per-plugin temporary directory path.
-func (m *Manager) TmpDir(pluginName string) string {
-	return filepath.Join(os.TempDir(), "wtmcp", pluginName)
-}
-
-// DataDir returns the per-plugin persistent data directory path.
-func (m *Manager) DataDir(pluginName string) string {
-	return filepath.Join(m.dataDir, pluginName)
-}
-
 // Launch starts a sandboxed process for the given plugin. Returns
 // a Process with stdin/stdout/stderr pipes for the parent.
 func (m *Manager) Launch(ctx context.Context, info PluginInfo, env map[string]string) (*Process, error) {
-	profile := m.BuildProfile(info)
+	profile := m.buildProfile(info)
 	tmpDir, _, err := m.PrepareDirs(info)
 	if err != nil {
 		return nil, err
@@ -182,8 +140,56 @@ func (m *Manager) Launch(ctx context.Context, info PluginInfo, env map[string]st
 	}, nil
 }
 
-// limitsFor returns resource limits for a plugin, with per-plugin
-// overrides merged on top of defaults.
+// Process wraps an arapuca sandboxed process, providing the parent-
+// side pipes and lifecycle methods.
+type Process struct {
+	proc   *arapuca.Process
+	stdin  *os.File
+	stdout *os.File
+	stderr *os.File
+	name   string
+}
+
+// Stdin returns the write end of the child's stdin pipe.
+func (p *Process) Stdin() io.WriteCloser { return p.stdin }
+
+// Stdout returns the read end of the child's stdout pipe.
+func (p *Process) Stdout() io.ReadCloser { return p.stdout }
+
+// Stderr returns the read end of the child's stderr pipe.
+func (p *Process) Stderr() io.ReadCloser { return p.stderr }
+
+// Wait waits for the sandboxed process to exit. Returns the exit code.
+func (p *Process) Wait() (int, error) { return p.proc.Wait() }
+
+// PID returns the sandboxed process ID.
+func (p *Process) PID() int { return p.proc.PID() }
+
+// ResourceStats returns cgroup v2 resource usage. Must be called
+// after Wait() and before Cleanup().
+func (p *Process) ResourceStats() ResourceUsage {
+	r := p.proc.ResourceStats()
+	return ResourceUsage{
+		MemoryCurrentBytes: r.MemoryCurrentBytes,
+		MemoryPeakBytes:    r.MemoryPeakBytes,
+		CPUUsageSeconds:    r.CPUUsageSeconds,
+		PIDCount:           r.PIDCount,
+		IOReadBytes:        r.IOReadBytes,
+		IOWriteBytes:       r.IOWriteBytes,
+	}
+}
+
+// OOMCount returns the number of OOM kills detected.
+func (p *Process) OOMCount() int {
+	return p.proc.OOMCount()
+}
+
+// Cleanup releases cgroup, tmpdir, and other kernel resources.
+// Must be called after Wait(). Safe to call multiple times.
+func (p *Process) Cleanup() {
+	p.proc.Cleanup()
+}
+
 func (m *Manager) limitsFor(pluginName string) config.SandboxResourceLimits {
 	limits := m.cfg.Defaults
 	if override, ok := m.cfg.Plugins[pluginName]; ok {
@@ -203,14 +209,8 @@ func (m *Manager) limitsFor(pluginName string) config.SandboxResourceLimits {
 	return limits
 }
 
-// sanitizeTaskID converts a plugin name to a valid arapuca task ID.
-// Arapuca allows [a-zA-Z0-9-] only; underscores are replaced with hyphens.
 func sanitizeTaskID(name string) string {
 	return strings.ReplaceAll(name, "_", "-")
-}
-
-func isPython(handler string) bool {
-	return strings.HasSuffix(handler, ".py")
 }
 
 func systemReadPaths() []string {
@@ -239,48 +239,6 @@ func pythonReadPaths() []string {
 		return []string{interp}
 	}
 	return []string{resolved, filepath.Dir(resolved)}
-}
-
-// Process wraps an arapuca sandboxed process, providing the parent-
-// side pipes and lifecycle methods.
-type Process struct {
-	proc   *arapuca.Process
-	stdin  *os.File
-	stdout *os.File
-	stderr *os.File
-	name   string
-}
-
-// Stdin returns the write end of the child's stdin pipe.
-func (p *Process) Stdin() io.WriteCloser { return p.stdin }
-
-// Stdout returns the read end of the child's stdout pipe.
-func (p *Process) Stdout() io.ReadCloser { return p.stdout }
-
-// Stderr returns the read end of the child's stderr pipe.
-func (p *Process) Stderr() io.ReadCloser { return p.stderr }
-
-// Wait waits for the sandboxed process to exit. Returns the exit code.
-func (p *Process) Wait() (int, error) { return p.proc.Wait() }
-
-// PID returns the sandboxed process ID.
-func (p *Process) PID() int { return p.proc.PID() }
-
-// ResourceStats returns cgroup v2 resource usage. Must be called
-// after Wait() and before Cleanup().
-func (p *Process) ResourceStats() arapuca.ResourceUsage {
-	return p.proc.ResourceStats()
-}
-
-// OOMCount returns the number of OOM kills detected.
-func (p *Process) OOMCount() int {
-	return p.proc.OOMCount()
-}
-
-// Cleanup releases cgroup, tmpdir, and other kernel resources.
-// Must be called after Wait(). Safe to call multiple times.
-func (p *Process) Cleanup() {
-	p.proc.Cleanup()
 }
 
 // pipeSet holds the six FDs for stdin/stdout/stderr pipe pairs.
