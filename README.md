@@ -120,6 +120,8 @@ http:
 Structured JSON audit log with UUIDv7 correlation IDs:
 
 - Tool call events: plugin, tool, parameters (scrubbed), duration
+- Elicitation events: plugin, tool, action (accept/decline/cancel/
+  error/unsupported)
 - HTTP proxy events: method, host, path, status, response size
 - Credential scrubbing: field names (password, token, secret),
   JWT detection (`eyJ` prefix), high-entropy string detection
@@ -134,6 +136,10 @@ audit:
 
 ### Prompt Injection Defense
 
+- **MCP Elicitation** (opt-in via `security.elicitation`) prompts
+  the user for confirmation before executing any write tool. The
+  confirmation message shows the tool name and scrubbed parameters.
+  Clients that lack elicitation support fall through gracefully
 - **Output framing** (opt-in via `security.tag_tool_output`) with
   per-session cryptographic nonce — injected tags in plugin output
   are detected and escaped
@@ -146,6 +152,12 @@ audit:
   This is a plugin-level convention, not core-enforced
 - **Read-only mode** enforced at three layers: tool registration,
   disabled stubs, and runtime rejection
+
+```yaml
+security:
+  elicitation: true      # confirm before write tools (default: true)
+  tag_tool_output: true  # nonce-based output tagging (default: true)
+```
 
 ### Credential Isolation
 

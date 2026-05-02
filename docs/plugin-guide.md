@@ -940,6 +940,13 @@ Attempting to access files outside these directories will fail with
 - **Audit logging**: all tool calls and HTTP requests are logged
   with UUIDv7 correlation IDs. Credential fields are automatically
   scrubbed from audit output.
+- **MCP Elicitation** (opt-in via `security.elicitation`): when
+  enabled, the server prompts the user for confirmation before
+  executing any write tool (`access: write` or unset). The
+  confirmation message includes the tool name and scrubbed
+  parameters (sensitive fields like `password`, `token`, `api_key`
+  are redacted). Clients without elicitation support fall through
+  and execute normally. All outcomes are audit-logged.
 - **Output framing** (opt-in via `security.tag_tool_output`):
   per-session nonce detects and escapes injected tags in plugin
   output. MCP Audience annotation (`[assistant]`) is always set on
