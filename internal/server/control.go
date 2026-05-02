@@ -151,6 +151,11 @@ func (w *ControlWatcher) processCommand(filename string) {
 			}
 			result["reloaded"] = reloaded
 		default:
+			if err := plugin.ValidatePluginName(pluginName); err != nil {
+				result["status"] = "error"
+				result["error"] = fmt.Sprintf("invalid plugin name: %v", err)
+				break
+			}
 			if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, pluginName, w.index, w.collector, w.auditor, w.rateLimiter, w.framer); err != nil {
 				result["status"] = "error"
 				result["error"] = err.Error()
