@@ -24,11 +24,9 @@ wtmcpctl: $(shell find cmd/wtmcpctl -name '*.go') $(shell find internal -name '*
 	go build -ldflags "$(LDFLAGS)" -o wtmcpctl ./cmd/wtmcpctl
 
 # Build with sandbox support (requires libarapuca via pkg-config)
-build-sandbox: plugins
+build-sandbox: wtmcpctl plugins
 	@echo "Building wtmcp (sandbox)..."
 	go build -tags sandbox -ldflags "$(LDFLAGS)" -o wtmcp ./cmd/wtmcp
-	@echo "Building wtmcpctl..."
-	go build -ldflags "$(LDFLAGS)" -o wtmcpctl ./cmd/wtmcpctl
 
 # Build all plugins that have a Makefile
 plugins:

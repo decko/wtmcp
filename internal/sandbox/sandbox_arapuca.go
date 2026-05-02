@@ -209,6 +209,8 @@ func (m *Manager) limitsFor(pluginName string) config.SandboxResourceLimits {
 	return limits
 }
 
+// sanitizeTaskID converts a plugin name to a valid arapuca task ID.
+// Arapuca allows [a-zA-Z0-9-] only; underscores become hyphens.
 func sanitizeTaskID(name string) string {
 	return strings.ReplaceAll(name, "_", "-")
 }

@@ -6,9 +6,30 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/LeGambiArt/wtmcp/internal/config"
 )
 
+func stubConfig() config.SandboxConfig {
+	disabled := false
+	cfg := testConfig()
+	cfg.Enabled = &disabled
+	return cfg
+}
+
 func TestStubNewManager(t *testing.T) {
+	mgr, err := NewManager(stubConfig(), "", t.TempDir())
+	if err != nil {
+		t.Fatalf("stub NewManager should succeed: %v", err)
+	}
+	defer mgr.Close()
+
+	if mgr == nil {
+		t.Fatal("stub NewManager should return non-nil Manager")
+	}
+}
+
+func TestStubNewManagerDefaultConfig(t *testing.T) {
 	cfg := testConfig()
 	mgr, err := NewManager(cfg, "", t.TempDir())
 	if err != nil {
@@ -50,7 +71,7 @@ func TestStubNewManagerExplicitDisable(t *testing.T) {
 }
 
 func TestStubEnabled(t *testing.T) {
-	mgr, _ := NewManager(testConfig(), "", t.TempDir())
+	mgr, _ := NewManager(stubConfig(), "", t.TempDir())
 	defer mgr.Close()
 
 	if mgr.Enabled() {
@@ -59,7 +80,7 @@ func TestStubEnabled(t *testing.T) {
 }
 
 func TestStubAvailable(t *testing.T) {
-	mgr, _ := NewManager(testConfig(), "", t.TempDir())
+	mgr, _ := NewManager(stubConfig(), "", t.TempDir())
 	defer mgr.Close()
 
 	if mgr.Available() {
@@ -68,7 +89,7 @@ func TestStubAvailable(t *testing.T) {
 }
 
 func TestStubLaunchReturnsError(t *testing.T) {
-	mgr, _ := NewManager(testConfig(), "", t.TempDir())
+	mgr, _ := NewManager(stubConfig(), "", t.TempDir())
 	defer mgr.Close()
 
 	info := PluginInfo{Name: "test", Dir: "/tmp", Handler: "./handler"}
@@ -76,10 +97,13 @@ func TestStubLaunchReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("stub Launch() must return an error")
 	}
+	if !strings.Contains(err.Error(), "sandbox") {
+		t.Errorf("error should mention sandbox, got: %v", err)
+	}
 }
 
 func TestStubCloseIdempotent(t *testing.T) {
-	mgr, _ := NewManager(testConfig(), "", t.TempDir())
+	mgr, _ := NewManager(stubConfig(), "", t.TempDir())
 	mgr.Close()
 	mgr.Close()
 }
