@@ -33,6 +33,20 @@ func NewOutputFramer(tagText bool) (*OutputFramer, error) {
 	return newOutputFramer(tagText)
 }
 
+// serverDeps bundles the shared dependencies used by tool registration,
+// management tools, and plugin reload. Avoids threading 8+ parameters
+// through every internal function.
+type serverDeps struct {
+	srv         *mcpserver.MCPServer
+	mgr         *plugin.Manager
+	cfg         *config.Config
+	index       *ToolIndex
+	collector   *stats.Collector
+	auditor     *audit.Logger
+	rateLimiter *ratelimit.Registry
+	framer      *OutputFramer
+}
+
 // New creates an MCP server with tools from all loaded plugins.
 func New(version string, manager *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) *mcpserver.MCPServer {
 	opts := []mcpserver.ServerOption{
@@ -44,13 +58,23 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 	}
 	srv := mcpserver.NewMCPServer("wtmcp", version, opts...)
 
-	progressive := cfg.Tools.Discovery == "progressive"
+	deps := &serverDeps{
+		srv:         srv,
+		mgr:         manager,
+		cfg:         cfg,
+		index:       index,
+		collector:   collector,
+		auditor:     auditor,
+		rateLimiter: rateLimiter,
+		framer:      framer,
+	}
 
 	if cfg.ReadOnly {
 		log.Println("read-only mode: write tools will not be registered")
 	}
 
 	disabled := manager.DisabledPlugins()
+	progressive := cfg.Tools.Discovery == "progressive"
 
 	// Register tools from all plugin manifests. In progressive
 	// mode, non-primary tools get the defer_loading flag.
@@ -59,11 +83,7 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 		if _, isDisabled := disabled[name]; isDisabled {
 			continue
 		}
-		outputFormat := cfg.Output.Format
-		if manifest.Output.Format != "" {
-			outputFormat = manifest.Output.Format
-		}
-		registerPluginTools(srv, manager, manifest, outputFormat, cfg.Output.ToonFallback, progressive, cfg.ReadOnly, cfg.Security.ElicitationEnabled(), collector, auditor, rateLimiter, framer)
+		registerPluginTools(deps, manifest)
 	}
 
 	// Register disabled plugin tools with [DISABLED] descriptions
@@ -76,7 +96,7 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 	RegisterPluginResources(srv, manager, collector)
 
 	// Built-in management tools
-	registerManagementTools(srv, manager, cfg, index, collector, auditor, rateLimiter, framer)
+	registerManagementTools(deps)
 
 	// tool_search — useful in both modes
 	registerToolSearch(srv, index)
@@ -84,7 +104,16 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 	return srv
 }
 
-func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest *plugin.Manifest, outputFormat string, toonFallback bool, progressive bool, readOnly bool, elicitation bool, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) {
+func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
+	progressive := deps.cfg.Tools.Discovery == "progressive"
+	readOnly := deps.cfg.ReadOnly
+	elicitation := deps.cfg.Security.ElicitationEnabled()
+
+	outputFormat := deps.cfg.Output.Format
+	if manifest.Output.Format != "" {
+		outputFormat = manifest.Output.Format
+	}
+
 	var skipped int
 	for _, toolDef := range manifest.Tools {
 		if readOnly && !toolDef.IsReadOnly() {
@@ -95,10 +124,17 @@ func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest
 		tool, schemaJSON := buildMCPTool(toolDef, progressive)
 		toolName := toolDef.Name
 		format := outputFormat
-		fallback := toonFallback
+		fallback := deps.cfg.Output.ToonFallback
 		plugName := manifest.Name
 		isRead := toolDef.IsReadOnly()
 		toolAccess := toolDef.Access
+
+		srv := deps.srv
+		mgr := deps.mgr
+		collector := deps.collector
+		auditor := deps.auditor
+		rateLimiter := deps.rateLimiter
+		framer := deps.framer
 
 		validator, err := plugin.CompileParamsSchema(toolName, toolDef)
 		if err != nil {
@@ -107,14 +143,11 @@ func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest
 			continue
 		}
 
-		// Record schema token cost.
 		if collector != nil {
 			collector.RecordSchema(toolName, plugName, toolDef.Description, schemaJSON)
 		}
 
 		srv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			// Defense-in-depth: reject write tools even if they
-			// somehow got registered in read-only mode.
 			if readOnly && !isRead {
 				return mcp.NewToolResultError("tool not available"), nil
 			}
@@ -306,7 +339,11 @@ func registerDisabledPluginTools(srv *mcpserver.MCPServer, disabled map[string]p
 	}
 }
 
-func registerManagementTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) {
+func registerManagementTools(deps *serverDeps) {
+	srv, mgr, cfg := deps.srv, deps.mgr, deps.cfg
+	index, collector := deps.index, deps.collector
+	auditor, rateLimiter, framer := deps.auditor, deps.rateLimiter, deps.framer
+
 	// plugin_list: list all plugins and their status
 	srv.AddTool(
 		mcp.NewTool("plugin_list",
@@ -489,6 +526,7 @@ func excludedToolNames() []string {
 // The index is rebuilt to reflect manifest changes, and tool_search is
 // re-registered so its CategorySummary stays current.
 func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, name string, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) error {
+	deps := &serverDeps{srv, mgr, cfg, index, collector, auditor, rateLimiter, framer}
 	progressive := cfg.Tools.Discovery == "progressive"
 
 	// Collect old tool names, context URIs, and provided resource URIs.
@@ -547,11 +585,7 @@ func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Man
 		single := map[string]plugin.DisabledPlugin{name: dp}
 		registerDisabledPluginTools(srv, single, progressive, cfg.ReadOnly)
 	} else if manifest, ok := mgr.Manifests()[name]; ok {
-		outputFormat := cfg.Output.Format
-		if manifest.Output.Format != "" {
-			outputFormat = manifest.Output.Format
-		}
-		registerPluginTools(srv, mgr, manifest, outputFormat, cfg.Output.ToonFallback, progressive, cfg.ReadOnly, cfg.Security.ElicitationEnabled(), collector, auditor, rateLimiter, framer)
+		registerPluginTools(deps, manifest)
 		registerPluginContextResources(srv, manifest, collector)
 		if manifest.ProvidesResources() {
 			if handle := mgr.Handle(name); handle != nil {

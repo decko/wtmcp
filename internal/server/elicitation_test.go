@@ -89,7 +89,7 @@ func elicitTestServer(elicitation bool, tools []plugin.ToolDef) *mcpserver.MCPSe
 	mgr.SetHandle("test-plugin")
 
 	cfg := config.DefaultConfig()
-	cfg.Security.Elicitation = elicitation
+	cfg.Security.Elicitation = &elicitation
 
 	rl, _ := ratelimit.New("1000/m", nil, "10000/m")
 	index := NewToolIndex(mgr, false)
