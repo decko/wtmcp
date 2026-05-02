@@ -843,6 +843,52 @@ p.OnInit(func(cfgRaw json.RawMessage) error {
 Python plugins that use the HTTP proxy don't need this — the server
 handles credential injection automatically.
 
+### _session_dir and _output_dir
+
+The server injects two directory paths into the resolved config:
+
+- **`_session_dir`**: the user's project directory (the CWD when
+  wtmcp started). Plugins can read files from this directory.
+- **`_output_dir`**: a per-plugin output directory at
+  `<session_dir>/wtmcp/<plugin-name>`. Plugins should write output
+  files here (exports, reports, downloaded attachments, etc.).
+
+Both values are available in the `config` during init and on each
+`tool_call`. If the user started wtmcp from a directory that is too
+broad (e.g., `/`), both values are empty and file I/O is
+unavailable.
+
+**Path confinement:** plugins that accept file paths from LLM
+parameters should validate them against these directories to
+prevent path traversal. The recommended pattern (from the jira
+plugin):
+
+```python
+from pathlib import Path
+
+def _validate_export_path(file_path):
+    output_dir = config.get("_output_dir", "")
+    if not output_dir:
+        raise ValueError("save requires a configured output directory")
+    if not file_path:
+        raise ValueError("output path is required")
+    path = Path(file_path)
+    if not path.is_absolute():
+        path = Path(output_dir) / path
+    resolved = path.resolve()
+    base = Path(output_dir).resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError:
+        raise ValueError(f"path escapes output directory: {file_path}")
+    return resolved
+```
+
+Under sandbox (`make build-sandbox`), `_session_dir` is in the
+sandbox's read paths and `_output_dir` is in the write paths.
+Attempting to access files outside these directories will fail with
+`EACCES`.
+
 ## Security
 
 - Plugins are semi-trusted: they run with the same OS privileges as
