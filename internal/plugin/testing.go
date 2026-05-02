@@ -16,7 +16,8 @@ func (m *Manager) SetManifest(name string, manifest *Manifest) {
 
 // SetHandle marks a plugin as loaded by creating a placeholder handle.
 func (m *Manager) SetHandle(name string) {
-	m.handles[name] = &Handle{}
+	manifest := m.manifests[name]
+	m.handles[name] = &Handle{manifest: manifest}
 }
 
 // SetDisabledPlugin marks a plugin as disabled for testing.

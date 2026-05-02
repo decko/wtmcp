@@ -249,3 +249,50 @@ func TestIsHighEntropy(t *testing.T) {
 		t.Error("natural text should not be high entropy")
 	}
 }
+
+func TestFieldScrubber_SkipsValueHeuristics(t *testing.T) {
+	s := NewFieldScrubber([]string{"password", "api_key"})
+
+	// JWT-shaped value in a non-sensitive field should NOT be redacted.
+	jwt := `{"data":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"}`
+	result := s.ScrubJSON(json.RawMessage(jwt))
+	if string(result) != jwt {
+		t.Errorf("field scrubber should not redact JWT in non-sensitive field, got: %s", result)
+	}
+
+	// High-entropy value in a non-sensitive field should NOT be redacted.
+	entropy := `{"request_id":"550e8400e29b41d4a716446655440000aabbccdd"}`
+	result = s.ScrubJSON(json.RawMessage(entropy))
+	if string(result) != entropy {
+		t.Errorf("field scrubber should not redact high-entropy non-sensitive field, got: %s", result)
+	}
+
+	// Sensitive field name should still be redacted.
+	sensitive := `{"password":"hunter2","api_key":"sk-live-abc123"}`
+	result = s.ScrubJSON(json.RawMessage(sensitive))
+	var obj map[string]string
+	if err := json.Unmarshal(result, &obj); err != nil {
+		t.Fatalf("failed to unmarshal scrubbed result: %v", err)
+	}
+	if obj["password"] != "[REDACTED]" {
+		t.Errorf("password should be redacted, got: %s", obj["password"])
+	}
+	if obj["api_key"] != "[REDACTED]" {
+		t.Errorf("api_key should be redacted, got: %s", obj["api_key"])
+	}
+}
+
+func TestNewScrubber_StillScrubbsValues(t *testing.T) {
+	s := NewScrubber([]string{"password"})
+
+	// JWT in non-sensitive field SHOULD be redacted by NewScrubber.
+	jwt := `{"data":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"}`
+	result := s.ScrubJSON(json.RawMessage(jwt))
+	var obj map[string]string
+	if err := json.Unmarshal(result, &obj); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if obj["data"] != "[REDACTED]" {
+		t.Errorf("NewScrubber should redact JWT values, got: %s", obj["data"])
+	}
+}

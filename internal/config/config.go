@@ -110,6 +110,7 @@ type StatsConfig struct {
 // SecurityConfig controls prompt injection defense features.
 type SecurityConfig struct {
 	TagToolOutput *bool `yaml:"tag_tool_output"`
+	Elicitation   *bool `yaml:"elicitation"`
 }
 
 // TagToolOutputEnabled returns whether tool output tagging is enabled
@@ -119,6 +120,15 @@ func (s SecurityConfig) TagToolOutputEnabled() bool {
 		return true
 	}
 	return *s.TagToolOutput
+}
+
+// ElicitationEnabled returns whether write tool confirmation prompts
+// are enabled (default: true when not explicitly set).
+func (s SecurityConfig) ElicitationEnabled() bool {
+	if s.Elicitation == nil {
+		return true
+	}
+	return *s.Elicitation
 }
 
 // AuditConfig controls security audit logging.

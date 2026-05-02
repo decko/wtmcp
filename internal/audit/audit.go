@@ -113,6 +113,23 @@ func (l *Logger) ToolCall(ctx context.Context, plugin, tool string, params json.
 	l.log(ctx, attrs)
 }
 
+// Elicitation logs a user confirmation prompt event.
+func (l *Logger) Elicitation(ctx context.Context, plugin, tool, action string) {
+	if !l.configured {
+		return
+	}
+
+	attrs := []slog.Attr{
+		slog.String("event", "elicitation"),
+		slog.String("correlation_id", CorrelationID(ctx)),
+		slog.String("plugin", plugin),
+		slog.String("tool", tool),
+		slog.String("action", action),
+	}
+
+	l.log(ctx, attrs)
+}
+
 // HTTPRequest logs an HTTP proxy request event.
 func (l *Logger) HTTPRequest(ctx context.Context, plugin, method, host, path string, status int, size int64) {
 	if !l.configured {
@@ -192,7 +209,11 @@ func (m *multiHandler) WithGroup(name string) slog.Handler {
 	return &multiHandler{handlers: handlers}
 }
 
-// DefaultScrubFields is the default set of field name patterns to scrub.
+// DefaultScrubFields is the default set of field name patterns to scrub
+// in audit logs. Intentionally broad (e.g., "key" matches issue_key)
+// because over-redaction is acceptable in audit output. The elicitation
+// scrubber in server.go uses a tighter list to avoid hiding values
+// users need to see in confirmation prompts.
 var DefaultScrubFields = []string{
 	"password", "passwd", "token", "secret", "key", "credential",
 	"auth", "api_key", "apikey", "private_key", "bearer",
@@ -202,16 +223,30 @@ var DefaultScrubFields = []string{
 
 // Scrubber redacts sensitive values from JSON payloads.
 type Scrubber struct {
-	fields []string
+	fields      []string
+	scrubValues bool
 }
 
-// NewScrubber creates a scrubber with the given field name patterns.
+// NewScrubber creates a scrubber that matches both field names and
+// value patterns (JWTs, high-entropy strings). Use for audit logs
+// where over-redaction is acceptable.
 func NewScrubber(fields []string) *Scrubber {
+	return newScrubber(fields, true)
+}
+
+// NewFieldScrubber creates a scrubber that only matches field names,
+// skipping value-based heuristics. Use for user-facing display where
+// over-redaction hides information the user needs to see.
+func NewFieldScrubber(fields []string) *Scrubber {
+	return newScrubber(fields, false)
+}
+
+func newScrubber(fields []string, scrubValues bool) *Scrubber {
 	lower := make([]string, len(fields))
 	for i, f := range fields {
 		lower[i] = strings.ToLower(f)
 	}
-	return &Scrubber{fields: lower}
+	return &Scrubber{fields: lower, scrubValues: scrubValues}
 }
 
 // ScrubJSON redacts values of sensitive fields in a JSON payload.
@@ -239,7 +274,7 @@ func (s *Scrubber) scrubObject(obj map[string]json.RawMessage, original json.Raw
 			changed = true
 			continue
 		}
-		if s.isSensitiveValue(val) {
+		if s.scrubValues && s.isSensitiveValue(val) {
 			obj[key] = json.RawMessage(`"[REDACTED]"`)
 			changed = true
 			continue

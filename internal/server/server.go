@@ -3,12 +3,15 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -32,12 +35,14 @@ func NewOutputFramer(tagText bool) (*OutputFramer, error) {
 
 // New creates an MCP server with tools from all loaded plugins.
 func New(version string, manager *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) *mcpserver.MCPServer {
-	srv := mcpserver.NewMCPServer(
-		"wtmcp",
-		version,
+	opts := []mcpserver.ServerOption{
 		mcpserver.WithToolCapabilities(true),
 		mcpserver.WithResourceCapabilities(true, true),
-	)
+	}
+	if cfg.Security.ElicitationEnabled() {
+		opts = append(opts, mcpserver.WithElicitation())
+	}
+	srv := mcpserver.NewMCPServer("wtmcp", version, opts...)
 
 	progressive := cfg.Tools.Discovery == "progressive"
 
@@ -58,7 +63,7 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 		if manifest.Output.Format != "" {
 			outputFormat = manifest.Output.Format
 		}
-		registerPluginTools(srv, manager, manifest, outputFormat, cfg.Output.ToonFallback, progressive, cfg.ReadOnly, collector, auditor, rateLimiter, framer)
+		registerPluginTools(srv, manager, manifest, outputFormat, cfg.Output.ToonFallback, progressive, cfg.ReadOnly, cfg.Security.ElicitationEnabled(), collector, auditor, rateLimiter, framer)
 	}
 
 	// Register disabled plugin tools with [DISABLED] descriptions
@@ -79,7 +84,7 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 	return srv
 }
 
-func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest *plugin.Manifest, outputFormat string, toonFallback bool, progressive bool, readOnly bool, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) {
+func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest *plugin.Manifest, outputFormat string, toonFallback bool, progressive bool, readOnly bool, elicitation bool, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) {
 	var skipped int
 	for _, toolDef := range manifest.Tools {
 		if readOnly && !toolDef.IsReadOnly() {
@@ -168,6 +173,63 @@ func registerPluginTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, manifest
 				isErr = true
 				errMsg = outputText
 				return mcp.NewToolResultError(outputText), nil
+			}
+
+			if !isRead && elicitation {
+				scrubbedParams := elicitScrubber.ScrubJSON(params)
+				elicitResult, elicitErr := srv.RequestElicitation(ctx,
+					mcp.ElicitationRequest{
+						Params: mcp.ElicitationParams{
+							Mode: mcp.ElicitationModeForm,
+							Message: fmt.Sprintf(
+								"Confirm: execute %s?\n\nParameters:\n%s",
+								toolName, truncateJSON(scrubbedParams, maxElicitParamLen)),
+							RequestedSchema: map[string]any{
+								"type":       "object",
+								"properties": map[string]any{},
+							},
+						},
+					})
+
+				var elicitAction string
+				var elicitBlock bool
+				switch {
+				case errors.Is(elicitErr, mcpserver.ErrElicitationNotSupported):
+					// Client doesn't support elicitation — fall through
+					// and execute without confirmation. This allows write
+					// tools to work with older clients that lack the
+					// elicitation capability.
+					elicitAction = "unsupported"
+					log.Printf("[%s] elicitation not supported by client", plugName)
+				case elicitErr != nil:
+					elicitAction = "error"
+					elicitBlock = true
+					log.Printf("[%s] elicitation error for %s: %v", plugName, toolName, elicitErr)
+				case elicitResult == nil:
+					elicitAction = "error"
+					elicitBlock = true
+					log.Printf("[%s] elicitation returned nil for %s", plugName, toolName)
+				case elicitResult.Action != mcp.ElicitationResponseActionAccept:
+					elicitAction = string(elicitResult.Action)
+					elicitBlock = true
+				default:
+					elicitAction = "accept"
+				}
+
+				if auditor != nil {
+					auditor.Elicitation(ctx, plugName, toolName, elicitAction)
+				}
+
+				if elicitBlock {
+					if elicitAction == "error" {
+						outputText = fmt.Sprintf("%s: confirmation failed, please try again", toolName)
+					} else {
+						outputText = fmt.Sprintf("%s: operation declined by user", toolName)
+					}
+					isErr = true
+					errMsg = outputText
+					return mcp.NewToolResultError(outputText), nil
+				}
 			}
 
 			callResult, err := handle.CallTool(ctx, toolName, params)
@@ -314,6 +376,22 @@ func registerManagementTools(srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg 
 		registerToolStats(srv, collector)
 	}
 }
+
+// elicitScrubFields is a tighter set of field patterns for
+// elicitation display. Omits broad patterns like "key" and "auth"
+// that would redact issue_key, project_key, author, etc.
+var elicitScrubFields = []string{
+	"password", "passwd", "token", "secret", "credential",
+	"api_key", "apikey", "private_key", "bearer",
+	"refresh_token", "access_token", "client_secret",
+	"session_id", "passcode", "passphrase", "certificate", "jwt",
+}
+
+// elicitScrubber redacts sensitive field values from tool parameters
+// before showing them in elicitation confirmation messages. Uses
+// field-name-only matching (no value heuristics) so users can see
+// UUIDs, issue keys, and other non-secret values.
+var elicitScrubber = audit.NewFieldScrubber(elicitScrubFields)
 
 // excludedTools is the set of management tools excluded from stats recording.
 var excludedTools = map[string]bool{
@@ -470,7 +548,7 @@ func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Man
 		if manifest.Output.Format != "" {
 			outputFormat = manifest.Output.Format
 		}
-		registerPluginTools(srv, mgr, manifest, outputFormat, cfg.Output.ToonFallback, progressive, cfg.ReadOnly, collector, auditor, rateLimiter, framer)
+		registerPluginTools(srv, mgr, manifest, outputFormat, cfg.Output.ToonFallback, progressive, cfg.ReadOnly, cfg.Security.ElicitationEnabled(), collector, auditor, rateLimiter, framer)
 		registerPluginContextResources(srv, manifest, collector)
 		if manifest.ProvidesResources() {
 			if handle := mgr.Handle(name); handle != nil {
@@ -666,6 +744,41 @@ func registerHandleResources(srv *mcpserver.MCPServer, pluginName string, handle
 			},
 		)
 	}
+}
+
+// maxElicitParamLen is the maximum byte length for tool parameters
+// shown in elicitation confirmation messages.
+const maxElicitParamLen = 500
+
+// truncateJSON pretty-prints JSON and truncates to maxLen bytes,
+// backing off to the last valid UTF-8 rune boundary.
+func truncateJSON(data json.RawMessage, maxLen int) string {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, data, "", "  "); err != nil {
+		s := string(data)
+		if len(s) > maxLen {
+			return truncateUTF8(s, maxLen) + "..."
+		}
+		return s
+	}
+	s := buf.String()
+	if len(s) > maxLen {
+		return truncateUTF8(s, maxLen) + "..."
+	}
+	return s
+}
+
+func truncateUTF8(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if maxLen >= len(s) {
+		return s
+	}
+	for maxLen > 0 && !utf8.RuneStart(s[maxLen]) {
+		maxLen--
+	}
+	return s[:maxLen]
 }
 
 // isPluginError checks if the error is a protocol.Error using errors.As.
