@@ -612,6 +612,114 @@ func TestCheckIP(t *testing.T) {
 			t.Errorf("checkIP(%q) = nil, want error", ip)
 		}
 	}
+
+	allowed := []string{
+		"8.8.8.8",
+		"1.1.1.1",
+		"93.184.216.34",
+	}
+	for _, ip := range allowed {
+		if err := checkIP(ip); err != nil {
+			t.Errorf("checkIP(%q) = %v, want nil", ip, err)
+		}
+	}
+}
+
+func TestCheckIPv6MappedIPv4(t *testing.T) {
+	blocked := []string{
+		"::ffff:127.0.0.1",
+		"::ffff:10.0.0.1",
+		"::ffff:192.168.1.1",
+	}
+	for _, ip := range blocked {
+		if err := checkIP(ip); err == nil {
+			t.Errorf("checkIP(%q) = nil, want SSRF blocked", ip)
+		}
+	}
+}
+
+func TestCheckIPLinkLocal(t *testing.T) {
+	blocked := []string{
+		"169.254.1.1",
+		"fe80::1",
+	}
+	for _, ip := range blocked {
+		if err := checkIP(ip); err == nil {
+			t.Errorf("checkIP(%q) = nil, want blocked", ip)
+		}
+	}
+}
+
+func TestCheckIPMulticast(t *testing.T) {
+	blocked := []string{
+		"224.0.0.1",
+		"239.255.0.1",
+		"ff02::1",
+		"ff05::1",
+	}
+	for _, ip := range blocked {
+		if err := checkIP(ip); err == nil {
+			t.Errorf("checkIP(%q) = nil, want blocked", ip)
+		}
+	}
+}
+
+func TestStripAuthOnCrossDomainRedirect(t *testing.T) {
+	mustParse := func(raw string) *url.URL {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+
+	t.Run("cross domain strips auth headers", func(t *testing.T) {
+		via := []*http.Request{{URL: mustParse("https://a.example.com/path")}}
+		req := &http.Request{
+			URL: mustParse("https://b.example.com/other"),
+			Header: http.Header{
+				"Authorization": {"Bearer tok"},
+				"Cookie":        {"session=abc"},
+				"Private-Token": {"glpat-xxx"},
+				"X-Api-Key":     {"key-123"},
+			},
+		}
+		if err := StripAuthOnCrossDomainRedirect(req, via); err != nil {
+			t.Fatal(err)
+		}
+		for _, h := range []string{"Authorization", "Cookie", "Private-Token", "X-Api-Key"} {
+			if req.Header.Get(h) != "" {
+				t.Errorf("header %s should be stripped on cross-domain redirect", h)
+			}
+		}
+	})
+
+	t.Run("same domain preserves headers", func(t *testing.T) {
+		via := []*http.Request{{URL: mustParse("https://api.example.com/a")}}
+		req := &http.Request{
+			URL: mustParse("https://api.example.com/b"),
+			Header: http.Header{
+				"Authorization": {"Bearer tok"},
+			},
+		}
+		if err := StripAuthOnCrossDomainRedirect(req, via); err != nil {
+			t.Fatal(err)
+		}
+		if req.Header.Get("Authorization") == "" {
+			t.Error("header should be preserved on same-domain redirect")
+		}
+	})
+
+	t.Run("redirect limit", func(t *testing.T) {
+		via := make([]*http.Request, 10)
+		for i := range via {
+			via[i] = &http.Request{URL: mustParse("https://example.com")}
+		}
+		req := &http.Request{URL: mustParse("https://example.com/11")}
+		if err := StripAuthOnCrossDomainRedirect(req, via); err == nil {
+			t.Error("expected error after 10 redirects")
+		}
+	})
 }
 
 func TestSafeDialerAllowPrivate(t *testing.T) {
@@ -835,15 +943,31 @@ func TestSchemeValidation(t *testing.T) {
 	pa := testPluginAuth("https://example.com")
 	p.RegisterPlugin("test", pa)
 
+	blocked := []string{
+		"ftp://example.com/file",
+		"gopher://example.com",
+	}
+	for _, u := range blocked {
+		resp := p.Execute(context.Background(), "test", protocol.Message{
+			ID:     "req-scheme",
+			Type:   protocol.TypeHTTPRequest,
+			Method: "GET",
+			URL:    u,
+		})
+		if resp.Error == nil || !strings.Contains(resp.Error.Message, "unsupported scheme") {
+			t.Errorf("URL %q: expected scheme validation error, got %v", u, resp.Error)
+		}
+	}
+
+	// file:// is rejected by domain validation (no host to match)
 	resp := p.Execute(context.Background(), "test", protocol.Message{
-		ID:     "req-ftp",
+		ID:     "req-file",
 		Type:   protocol.TypeHTTPRequest,
 		Method: "GET",
-		URL:    "ftp://example.com/file",
+		URL:    "file:///etc/passwd",
 	})
-
-	if resp.Error == nil || !strings.Contains(resp.Error.Message, "unsupported scheme") {
-		t.Errorf("expected scheme validation error, got %v", resp.Error)
+	if resp.Error == nil {
+		t.Error("file:// URL should be rejected")
 	}
 }
 
