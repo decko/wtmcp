@@ -115,6 +115,35 @@ http:
       api.github.com: "30/m"
 ```
 
+### HTTP Retries
+
+Automatic retry with exponential backoff for transient upstream
+failures. Only idempotent methods (GET, HEAD, OPTIONS, PUT,
+DELETE) are retried — POST/PATCH are never retried. Respects
+`Retry-After` headers (clamped to 30s). Context-aware: the tool
+call timeout naturally caps total retry duration.
+
+```yaml
+http:
+  retries:
+    max: 3                          # retries (not counting initial)
+    backoff: exponential            # 1s, 2s, 4s... capped at 30s
+    retry_on: [500, 502, 503, 504]  # status codes to retry
+```
+
+### Cache Limits
+
+Per-plugin entry limits with LRU eviction. Entries exceeding
+`max_entry_size` are rejected. Background cleanup removes expired
+entries at the configured interval.
+
+```yaml
+cache:
+  max_entries_per_plugin: 10000  # LRU eviction when exceeded
+  max_entry_size: 1048576        # 1MB max per entry
+  cleanup_interval: 60s          # expired entry sweep
+```
+
 ### Audit Logging
 
 Structured JSON audit log with UUIDv7 correlation IDs:
@@ -141,9 +170,9 @@ audit:
   message shows the tool name and scrubbed parameters. Clients
   that lack elicitation support fall through gracefully. Disable
   with `security.elicitation: false`
-- **Output framing** (opt-in via `security.tag_tool_output`) with
-  per-session cryptographic nonce — injected tags in plugin output
-  are detected and escaped
+- **Output framing** (enabled by default) with per-session
+  cryptographic nonce — injected tags in plugin output are detected
+  and escaped. Disable with `security.tag_tool_output: false`
 - **MCP Audience annotation** set to `[assistant]` on all tool
   results (always active)
 - **JSON Schema validation** on every tool call from compiled

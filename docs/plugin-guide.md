@@ -940,17 +940,25 @@ Attempting to access files outside these directories will fail with
 - **Audit logging**: all tool calls and HTTP requests are logged
   with UUIDv7 correlation IDs. Credential fields are automatically
   scrubbed from audit output.
-- **MCP Elicitation** (opt-in via `security.elicitation`): when
-  enabled, the server prompts the user for confirmation before
-  executing any write tool (`access: write` or unset). The
-  confirmation message includes the tool name and scrubbed
-  parameters (sensitive fields like `password`, `token`, `api_key`
-  are redacted). Clients without elicitation support fall through
-  and execute normally. All outcomes are audit-logged.
-- **Output framing** (opt-in via `security.tag_tool_output`):
-  per-session nonce detects and escapes injected tags in plugin
-  output. MCP Audience annotation (`[assistant]`) is always set on
-  tool results.
+- **HTTP retries**: idempotent requests (GET, HEAD, OPTIONS, PUT,
+  DELETE) are automatically retried on transient failures (500, 502,
+  503, 504) with exponential backoff (capped at 30s). POST/PATCH
+  are never retried. `Retry-After` headers are respected (clamped
+  to 30s). Configurable via `http.retries` in `config.yaml`.
+- **Cache limits**: per-plugin entry count is capped at 10,000
+  (configurable) with LRU eviction. Entries exceeding 1MB are
+  rejected. Background cleanup removes expired entries every 60s.
+- **MCP Elicitation** (enabled by default): the server prompts the
+  user for confirmation before executing any write tool (`access:
+  write` or unset). The confirmation message includes the tool name
+  and scrubbed parameters (sensitive fields like `password`,
+  `token`, `api_key` are redacted). Clients without elicitation
+  support fall through and execute normally. All outcomes are
+  audit-logged. Disable with `security.elicitation: false`.
+- **Output framing** (enabled by default): per-session nonce
+  detects and escapes injected tags in plugin output. MCP Audience
+  annotation (`[assistant]`) is always set on tool results. Disable
+  with `security.tag_tool_output: false`.
 
 ## Security Guidelines for Plugin Authors
 
