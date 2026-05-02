@@ -39,7 +39,7 @@ func newTestServer(t *testing.T, handler func(grant, clientID, refresh string) (
 // newProvider creates a RefreshTokenProvider pointing at the test server.
 func newProvider(t *testing.T, srv *httptest.Server) *RefreshTokenProvider {
 	t.Helper()
-	p, err := NewRefreshTokenProvider(srv.URL, "test-client", "offline-tok")
+	p, err := NewRefreshTokenProvider(srv.URL, "test-client", "offline-tok", srv.Client().Transport)
 	if err != nil {
 		t.Fatalf("NewRefreshTokenProvider: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestMalformedJSON(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok")
+	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok", srv.Client().Transport)
 	p.client = srv.Client()
 
 	_, err := p.Authenticate(context.Background(), nil)
@@ -244,7 +244,7 @@ func TestOversizedResponse(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok")
+	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok", srv.Client().Transport)
 	p.client = srv.Client()
 
 	_, err := p.Authenticate(context.Background(), nil)
@@ -276,7 +276,7 @@ func TestMissingExpiresInDefaults(t *testing.T) {
 }
 
 func TestNonHTTPSRejected(t *testing.T) {
-	_, err := NewRefreshTokenProvider("http://sso.example.com/token", "client", "tok")
+	_, err := NewRefreshTokenProvider("http://sso.example.com/token", "client", "tok", nil)
 	if err == nil {
 		t.Fatal("expected error for http:// URL")
 	}
@@ -286,7 +286,7 @@ func TestNonHTTPSRejected(t *testing.T) {
 }
 
 func TestInvalidURL(t *testing.T) {
-	_, err := NewRefreshTokenProvider("://bad", "client", "tok")
+	_, err := NewRefreshTokenProvider("://bad", "client", "tok", nil)
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
 	}
@@ -301,7 +301,7 @@ func TestContextCancellation(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok")
+	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok", srv.Client().Transport)
 	p.client = srv.Client()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)

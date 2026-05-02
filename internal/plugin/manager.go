@@ -1267,6 +1267,12 @@ func (m *Manager) resolveAuth(pluginName string, manifest *Manifest) auth.Provid
 		return decrypted
 	}
 
+	safeTransport, err := proxy.SafeTransportWithTLS(false, proxy.TLSConfig{})
+	if err != nil {
+		log.Printf("[%s] safe transport for auth: %v", manifest.Name, err)
+		return nil
+	}
+
 	var variantCfg auth.VariantConfig
 	if len(authCfg.Variants) > 0 {
 		variantCfg.Select = resolve(authCfg.Select)
@@ -1296,6 +1302,7 @@ func (m *Manager) resolveAuth(pluginName string, manifest *Manifest) auth.Provid
 				CredentialsDir:  credDir,
 				TokenURL:        resolve(v.TokenURL),
 				ClientID:        resolve(v.ClientID),
+				Transport:       safeTransport,
 			}
 		}
 	} else {
@@ -1318,6 +1325,7 @@ func (m *Manager) resolveAuth(pluginName string, manifest *Manifest) auth.Provid
 				CredentialsDir:  credDir,
 				TokenURL:        resolve(authCfg.TokenURL),
 				ClientID:        resolve(authCfg.ClientID),
+				Transport:       safeTransport,
 			},
 		}
 	}

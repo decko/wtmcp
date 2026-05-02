@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"net/http"
 	"slices"
 )
 
@@ -56,6 +57,7 @@ type SingleAuthConfig struct {
 	CredentialsDir  string
 	TokenURL        string
 	ClientID        string
+	Transport       http.RoundTripper // safe transport injected by plugin manager
 }
 
 // ResolveVariant selects the appropriate auth provider from a variant config.
@@ -106,9 +108,9 @@ func providerFromConfig(typeName string, cfg SingleAuthConfig) (Provider, error)
 	case "kerberos/spnego":
 		return NewKerberosProvider(cfg.SPN), nil
 	case "oauth2":
-		return NewOAuth2Provider(cfg.TokenFile, cfg.CredentialsFile, cfg.Scopes, cfg.CredentialsDir), nil
+		return NewOAuth2Provider(cfg.TokenFile, cfg.CredentialsFile, cfg.Scopes, cfg.CredentialsDir, cfg.Transport)
 	case "refresh_token":
-		return NewRefreshTokenProvider(cfg.TokenURL, cfg.ClientID, cfg.Token)
+		return NewRefreshTokenProvider(cfg.TokenURL, cfg.ClientID, cfg.Token, cfg.Transport)
 	default:
 		return nil, fmt.Errorf("unknown auth type: %s", typeName)
 	}

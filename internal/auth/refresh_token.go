@@ -37,8 +37,9 @@ type RefreshTokenProvider struct {
 }
 
 // NewRefreshTokenProvider creates a refresh-token auth provider.
-// Returns an error if tokenURL is not a valid HTTPS URL.
-func NewRefreshTokenProvider(tokenURL, clientID, refreshToken string) (*RefreshTokenProvider, error) {
+// Returns an error if tokenURL is not a valid HTTPS URL or if
+// transport is nil.
+func NewRefreshTokenProvider(tokenURL, clientID, refreshToken string, transport http.RoundTripper) (*RefreshTokenProvider, error) {
 	u, err := url.Parse(tokenURL)
 	if err != nil {
 		return nil, fmt.Errorf("refresh_token: invalid token_url: %w", err)
@@ -46,12 +47,15 @@ func NewRefreshTokenProvider(tokenURL, clientID, refreshToken string) (*RefreshT
 	if u.Scheme != "https" {
 		return nil, fmt.Errorf("refresh_token: token_url must use https: %s", tokenURL)
 	}
+	if transport == nil {
+		return nil, fmt.Errorf("refresh_token: transport must not be nil")
+	}
 
 	return &RefreshTokenProvider{
 		tokenURL:     tokenURL,
 		clientID:     clientID,
 		refreshToken: refreshToken,
-		client:       &http.Client{Timeout: 30 * time.Second},
+		client:       &http.Client{Timeout: 30 * time.Second, Transport: transport},
 	}, nil
 }
 

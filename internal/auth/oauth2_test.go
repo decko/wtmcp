@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,8 @@ import (
 
 	"golang.org/x/oauth2"
 )
+
+var testTransport = http.DefaultTransport
 
 func TestOAuth2ProviderLoadToken(t *testing.T) {
 	dir := t.TempDir()
@@ -27,7 +30,7 @@ func TestOAuth2ProviderLoadToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p := NewOAuth2Provider(tokenFile, "nonexistent-creds.json", []string{"scope1"}, dir)
+	p, _ := NewOAuth2Provider(tokenFile, "nonexistent-creds.json", []string{"scope1"}, dir, testTransport)
 
 	if p.Name() != "oauth2" {
 		t.Errorf("Name() = %q", p.Name())
@@ -62,7 +65,7 @@ func TestOAuth2ProviderExpiredNoRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p := NewOAuth2Provider(tokenFile, "nonexistent.json", nil, dir)
+	p, _ := NewOAuth2Provider(tokenFile, "nonexistent.json", nil, dir, testTransport)
 
 	// Available should be false — expired and no refresh token
 	if p.Available() {
@@ -76,7 +79,7 @@ func TestOAuth2ProviderExpiredNoRefresh(t *testing.T) {
 }
 
 func TestOAuth2ProviderNoToken(t *testing.T) {
-	p := NewOAuth2Provider("/nonexistent/token.json", "/nonexistent/creds.json", nil, "")
+	p, _ := NewOAuth2Provider("/nonexistent/token.json", "/nonexistent/creds.json", nil, "", testTransport)
 
 	if p.Available() {
 		t.Error("should not be available without token")

@@ -24,6 +24,7 @@ type OAuth2Provider struct {
 	credentialsDir string
 	scopes         []string
 	config         *oauth2.Config
+	transport      http.RoundTripper
 }
 
 // NewOAuth2Provider creates an OAuth2 auth provider.
@@ -32,11 +33,15 @@ type OAuth2Provider struct {
 // credentialsFile is the path to the OAuth2 client credentials
 // (client_id, client_secret, etc.).
 // scopes are the OAuth2 scopes to request.
-func NewOAuth2Provider(tokenFile, credentialsFile string, scopes []string, credentialsDir string) *OAuth2Provider {
+func NewOAuth2Provider(tokenFile, credentialsFile string, scopes []string, credentialsDir string, transport http.RoundTripper) (*OAuth2Provider, error) {
+	if transport == nil {
+		return nil, fmt.Errorf("oauth2: transport must not be nil")
+	}
 	p := &OAuth2Provider{
 		tokenFile:      resolveCredentialPath(tokenFile, credentialsDir),
 		credentialsDir: credentialsDir,
 		scopes:         scopes,
+		transport:      transport,
 	}
 
 	// Load OAuth2 client config from credentials file
@@ -52,7 +57,7 @@ func NewOAuth2Provider(tokenFile, credentialsFile string, scopes []string, crede
 		p.token = tok
 	}
 
-	return p
+	return p, nil
 }
 
 // Name returns "oauth2".
@@ -101,6 +106,8 @@ func (o *OAuth2Provider) refreshLocked(ctx context.Context) error {
 		return fmt.Errorf("no OAuth2 client config — cannot refresh")
 	}
 
+	ctx = context.WithValue(ctx, oauth2.HTTPClient,
+		&http.Client{Transport: o.transport, Timeout: 30 * time.Second})
 	src := o.config.TokenSource(ctx, o.token)
 	newToken, err := src.Token()
 	if err != nil {
