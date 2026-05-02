@@ -1083,12 +1083,7 @@ func (m *Manager) buildShadowCredentialsDir(pluginName, originalDir string) (str
 	}
 
 	shadowDir := filepath.Join(base, "wtmcp-shadow", pluginName)
-	if info, err := os.Lstat(shadowDir); err == nil {
-		if info.Mode().Type()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("shadow dir %s is a symlink — refusing to remove", shadowDir)
-		}
-		_ = os.RemoveAll(shadowDir)
-	}
+	_ = os.RemoveAll(shadowDir)
 	if err := os.MkdirAll(shadowDir, 0o700); err != nil {
 		return "", fmt.Errorf("create shadow dir: %w", err)
 	}
