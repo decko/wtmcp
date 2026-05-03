@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -116,9 +117,17 @@ func (w *ControlWatcher) processCommands() {
 	}
 }
 
+var validCommandName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
 func (w *ControlWatcher) processCommand(filename string) {
 	commandPath := filepath.Join(w.commandsDir, filename)
 	commandName := strings.TrimSuffix(filename, filepath.Ext(filename))
+
+	if !validCommandName.MatchString(commandName) {
+		log.Printf("control: ignoring invalid command filename %q", filename)
+		_ = os.Remove(commandPath)
+		return
+	}
 
 	result := map[string]any{
 		"command":   commandName,
@@ -180,7 +189,7 @@ func (w *ControlWatcher) processCommand(filename string) {
 
 	// Write result
 	resultData, _ := json.MarshalIndent(result, "", "  ")
-	resultPath := filepath.Join(w.resultsDir, commandName+".json")
+	resultPath := filepath.Join(w.resultsDir, filepath.Base(commandName)+".json")
 	_ = os.WriteFile(resultPath, resultData, 0o600)
 
 	// Remove command file

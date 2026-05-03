@@ -1,6 +1,41 @@
 package server
 
-import "testing"
+import (
+	"testing"
+)
+
+func TestValidCommandName(t *testing.T) {
+	valid := []string{
+		"reload-jira",
+		"list",
+		"reload-google-calendar",
+		"reload-all",
+		"reload",
+		"a",
+		"test-123",
+	}
+	for _, name := range valid {
+		if !validCommandName.MatchString(name) {
+			t.Errorf("expected %q to be valid", name)
+		}
+	}
+
+	invalid := []string{
+		"../../etc/passwd",
+		"UPPER",
+		"has space",
+		"has.dot",
+		"unicode-日本語",
+		"-leading-dash",
+		"",
+		"reload\x00-jira",
+	}
+	for _, name := range invalid {
+		if validCommandName.MatchString(name) {
+			t.Errorf("expected %q to be invalid", name)
+		}
+	}
+}
 
 func TestParseCommand(t *testing.T) {
 	tests := []struct {
