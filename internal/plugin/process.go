@@ -116,7 +116,7 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 
 	if p.manifest.ProvidesResources() {
-		if err := p.queryResources(); err != nil {
+		if err := p.queryResources(ctx); err != nil {
 			return err
 		}
 	}
@@ -185,7 +185,7 @@ func (p *Process) doInit(ctx context.Context) error {
 	defer cancel()
 
 	id := p.Transport.GenerateID("init")
-	resp, err := p.Transport.SendAndWait(id, protocol.Message{
+	resp, err := p.Transport.SendAndWait(initCtx, id, protocol.Message{
 		Type:     protocol.TypeInit,
 		Protocol: protocol.ProtocolVersion,
 		Config:   p.resolvedConfig,
@@ -195,7 +195,6 @@ func (p *Process) doInit(ctx context.Context) error {
 		p.state = StateFailed
 		return fmt.Errorf("plugin %s init timed out: %w", p.manifest.Name, err)
 	}
-	_ = initCtx
 	if resp.Type == protocol.TypeInitError {
 		p.kill()
 		p.state = StateFailed
@@ -210,9 +209,9 @@ func (p *Process) doInit(ctx context.Context) error {
 	return nil
 }
 
-func (p *Process) queryResources() error {
+func (p *Process) queryResources(ctx context.Context) error {
 	id := p.Transport.GenerateID("res")
-	resp, err := p.Transport.SendAndWait(id, protocol.Message{
+	resp, err := p.Transport.SendAndWait(ctx, id, protocol.Message{
 		Type: protocol.TypeListResources,
 	})
 	if err != nil {
@@ -243,8 +242,7 @@ func (p *Process) Stop(ctx context.Context) error {
 		defer cancel()
 
 		id := p.Transport.GenerateID("shutdown")
-		_, err := p.Transport.SendAndWait(id, protocol.Message{Type: protocol.TypeShutdown})
-		_ = shutdownCtx
+		_, err := p.Transport.SendAndWait(shutdownCtx, id, protocol.Message{Type: protocol.TypeShutdown})
 		if err != nil {
 			log.Printf("[%s] shutdown timed out, force stopping", p.manifest.Name)
 			return p.forceStop()

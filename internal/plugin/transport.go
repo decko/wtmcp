@@ -61,8 +61,10 @@ func (t *Transport) Send(msg protocol.Message) error {
 }
 
 // SendAndWait sends a message and waits for a response with the same ID.
-// The response is routed by ReadLoop.
-func (t *Transport) SendAndWait(id string, msg protocol.Message) (protocol.Message, error) {
+// The response is routed by ReadLoop. The context controls the maximum
+// wait time — if the context is cancelled or its deadline expires,
+// SendAndWait returns immediately with the context error.
+func (t *Transport) SendAndWait(ctx context.Context, id string, msg protocol.Message) (protocol.Message, error) {
 	ch := make(chan protocol.Message, 1)
 	t.pending.Store(id, ch)
 	defer t.pending.Delete(id)
@@ -78,6 +80,8 @@ func (t *Transport) SendAndWait(id string, msg protocol.Message) (protocol.Messa
 			return protocol.Message{}, fmt.Errorf("plugin exited while waiting for response to %s", id)
 		}
 		return resp, nil
+	case <-ctx.Done():
+		return protocol.Message{}, ctx.Err()
 	case <-t.done:
 		return protocol.Message{}, fmt.Errorf("transport closed while waiting for response to %s", id)
 	}

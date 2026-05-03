@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -271,6 +272,90 @@ func TestReadLoopOrphanedToolResult(t *testing.T) {
 	// ReadLoop should handle this gracefully (log orphan, not panic)
 	tr.ReadLoop("test-plugin", 1, handler)
 	// If we get here without panic, the test passes
+}
+
+func TestSendAndWaitReturnsResponse(t *testing.T) {
+	// Verify SendAndWait returns a normal response with context.Background().
+	resp := protocol.Message{ID: "req-1", Type: protocol.TypeToolResult, Result: json.RawMessage(`{"ok":true}`)}
+	data, _ := json.Marshal(resp)
+
+	pluginStdout := strings.NewReader(string(data) + "\n")
+	var pluginStdin bytes.Buffer
+	tr := NewTransport(&pluginStdin, pluginStdout, strings.NewReader(""), 1024*1024)
+
+	go tr.ReadLoop("test", 1, &mockServiceHandler{})
+
+	got, err := tr.SendAndWait(context.Background(), "req-1", protocol.Message{Type: protocol.TypeToolCall})
+	if err != nil {
+		t.Fatalf("SendAndWait returned error: %v", err)
+	}
+	if got.Type != protocol.TypeToolResult {
+		t.Errorf("Type = %q, want %q", got.Type, protocol.TypeToolResult)
+	}
+}
+
+func TestSendAndWaitTimeout(t *testing.T) {
+	br := newBlockingReader()
+	t.Cleanup(br.Close)
+
+	tr := NewTransport(io.Discard, br, strings.NewReader(""), 1024*1024)
+	go tr.ReadLoop("test", 1, &mockServiceHandler{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err := tr.SendAndWait(ctx, "req-1", protocol.Message{Type: protocol.TypeToolCall})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+
+	if _, ok := tr.pending.Load("req-1"); ok {
+		t.Error("pending entry should be deleted after SendAndWait returns")
+	}
+}
+
+func TestSendAndWaitCancelled(t *testing.T) {
+	br := newBlockingReader()
+	t.Cleanup(br.Close)
+
+	tr := NewTransport(io.Discard, br, strings.NewReader(""), 1024*1024)
+	go tr.ReadLoop("test", 1, &mockServiceHandler{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelled := make(chan struct{})
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		close(cancelled)
+	}()
+
+	_, err := tr.SendAndWait(ctx, "req-1", protocol.Message{Type: protocol.TypeToolCall})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	<-cancelled
+}
+
+// blockingReader blocks until Close is called, preventing goroutine leaks in tests.
+type blockingReader struct {
+	done chan struct{}
+}
+
+func newBlockingReader() *blockingReader {
+	return &blockingReader{done: make(chan struct{})}
+}
+
+func (b *blockingReader) Read([]byte) (int, error) {
+	<-b.done
+	return 0, io.EOF
+}
+
+func (b *blockingReader) Close() {
+	select {
+	case <-b.done:
+	default:
+		close(b.done)
+	}
 }
 
 func TestError(t *testing.T) {

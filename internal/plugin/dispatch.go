@@ -325,10 +325,10 @@ func (h *Handle) callOneshot(ctx context.Context, toolName string, params json.R
 
 // ListResources queries the handler for its current resource list.
 // Uses transport directly (not h.mu) to avoid deadlock with tool calls.
-func (h *Handle) ListResources(_ context.Context) ([]protocol.ResourceDef, error) {
+func (h *Handle) ListResources(ctx context.Context) ([]protocol.ResourceDef, error) {
 	transport := h.process.Transport
 	id := transport.GenerateID("res")
-	resp, err := transport.SendAndWait(id, protocol.Message{
+	resp, err := transport.SendAndWait(ctx, id, protocol.Message{
 		Type: protocol.TypeListResources,
 	})
 	if err != nil {
@@ -342,10 +342,10 @@ func (h *Handle) ListResources(_ context.Context) ([]protocol.ResourceDef, error
 
 // ReadResource requests the content of a specific resource URI.
 // Uses transport directly (not h.mu) to avoid deadlock with tool calls.
-func (h *Handle) ReadResource(_ context.Context, uri string) (string, string, error) {
+func (h *Handle) ReadResource(ctx context.Context, uri string) (string, string, error) {
 	transport := h.process.Transport
 	id := transport.GenerateID("res")
-	resp, err := transport.SendAndWait(id, protocol.Message{
+	resp, err := transport.SendAndWait(ctx, id, protocol.Message{
 		Type: protocol.TypeReadResource,
 		URI:  uri,
 	})
