@@ -87,12 +87,11 @@ func TestReadLoopRoutesToolResult(t *testing.T) {
 
 	tr := NewTransport(&pluginStdin, pluginStdout, strings.NewReader(""), 1024*1024)
 
-	handler := &mockServiceHandler{}
-	go tr.ReadLoop("test-plugin", 1, handler)
-
-	// Register pending before ReadLoop processes the message
 	ch := make(chan protocol.Message, 1)
 	tr.pending.Store("req-1", ch)
+
+	handler := &mockServiceHandler{}
+	go tr.ReadLoop("test-plugin", 1, handler)
 
 	select {
 	case resp := <-ch:
