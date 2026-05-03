@@ -23,7 +23,7 @@ func TestReloadDisabledPlugin_StubToolsRemoved(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	index := NewToolIndex(mgr, false)
-	srv := New("test", mgr, cfg, index, nil, nil, nil, nil)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, nil, nil)
 
 	// Verify disabled tools are registered with [DISABLED] descriptions.
 	tools := srv.ListTools()
@@ -81,7 +81,7 @@ func TestReloadDisabledPlugin_ManifestsPathStillWorks(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	index := NewToolIndex(mgr, false)
-	srv := New("test", mgr, cfg, index, nil, nil, nil, nil)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, nil, nil)
 
 	// Verify the tool is registered normally.
 	tools := srv.ListTools()
@@ -130,7 +130,7 @@ func TestSwapStartFailedTools(t *testing.T) {
 	index := NewToolIndex(mgr, false)
 
 	// New() registers tools normally (as if plugin was pending start).
-	srv := New("test", mgr, cfg, index, nil, nil, nil, nil)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, nil, nil)
 
 	// Verify tools are registered as normal (no [DISABLED]).
 	tools := srv.ListTools()
@@ -178,7 +178,7 @@ func TestSwapStartFailedTools_SkipsAlreadyDisabled(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	index := NewToolIndex(mgr, false)
-	srv := New("test", mgr, cfg, index, nil, nil, nil, nil)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, nil, nil)
 
 	// Verify it's already a [DISABLED] stub.
 	tools := srv.ListTools()
@@ -211,7 +211,7 @@ func TestReloadPlugin_StillDisabledReRegistersStubs(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	index := NewToolIndex(mgr, false)
-	srv := New("test", mgr, cfg, index, nil, nil, nil, nil)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, nil, nil)
 
 	// Verify stub is registered.
 	tools := srv.ListTools()
@@ -273,5 +273,84 @@ func TestBadSchema_ToolDisabledInServer(t *testing.T) {
 	}
 	if _, ok := tools["bad_tool"]; ok {
 		t.Error("bad_tool with invalid schema should NOT be registered")
+	}
+}
+
+func TestToolCollision_SecondPluginSkipped(t *testing.T) {
+	mgr := plugin.NewManagerForTest()
+	mgr.SetManifest("alpha", &plugin.Manifest{
+		Name: "alpha",
+		Tools: []plugin.ToolDef{
+			{Name: "shared_tool", Description: "From alpha", Access: "read"},
+		},
+	})
+	mgr.SetHandle("alpha")
+	mgr.SetManifest("beta", &plugin.Manifest{
+		Name: "beta",
+		Tools: []plugin.ToolDef{
+			{Name: "shared_tool", Description: "From beta", Access: "read"},
+			{Name: "beta_only", Description: "Only in beta", Access: "read"},
+		},
+	})
+	mgr.SetHandle("beta")
+
+	cfg := config.DefaultConfig()
+	index := NewToolIndex(mgr, false)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, nil, nil)
+
+	tools := srv.ListTools()
+
+	st, ok := tools["shared_tool"]
+	if !ok {
+		t.Fatal("shared_tool should be registered")
+	}
+
+	// Map iteration order is non-deterministic, so either alpha or
+	// beta may register first. The key property: exactly one wins,
+	// and the tool is not silently replaced (description comes from
+	// one plugin only, not both).
+	desc := st.Tool.Description
+	fromAlpha := strings.Contains(desc, "From alpha")
+	fromBeta := strings.Contains(desc, "From beta")
+	if fromAlpha == fromBeta {
+		t.Errorf("shared_tool should be owned by exactly one plugin, got description: %s", desc)
+	}
+
+	if _, ok := tools["beta_only"]; !ok {
+		t.Error("non-colliding tools from beta should still be registered")
+	}
+}
+
+func TestToolCollision_ReloadPurgesStaleEntries(t *testing.T) {
+	mgr := plugin.NewManagerForTest()
+	mgr.SetManifest("alpha", &plugin.Manifest{
+		Name:      "alpha",
+		Execution: "oneshot",
+		Tools: []plugin.ToolDef{
+			{Name: "alpha_tool", Description: "From alpha", Access: "read"},
+		},
+	})
+	mgr.SetHandle("alpha")
+
+	cfg := config.DefaultConfig()
+	index := NewToolIndex(mgr, false)
+	srv, toolOwners := New("test", mgr, cfg, index, nil, nil, nil, nil)
+
+	tools := srv.ListTools()
+	if _, ok := tools["alpha_tool"]; !ok {
+		t.Fatal("alpha_tool should be registered")
+	}
+
+	oldNames := []string{"alpha_tool"}
+	srv.DeleteTools(oldNames...)
+	toolOwners.removePlugin("alpha")
+
+	deps := &serverDeps{srv, mgr, cfg, index, nil, nil, nil, nil, toolOwners}
+	manifest := mgr.Manifests()["alpha"]
+	registerPluginTools(deps, manifest)
+
+	tools = srv.ListTools()
+	if _, ok := tools["alpha_tool"]; !ok {
+		t.Fatal("alpha_tool should be re-registered after purge without self-collision")
 	}
 }

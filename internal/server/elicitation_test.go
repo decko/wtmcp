@@ -93,7 +93,8 @@ func elicitTestServer(elicitation bool, tools []plugin.ToolDef) *mcpserver.MCPSe
 
 	rl, _ := ratelimit.New("1000/m", nil, "10000/m")
 	index := NewToolIndex(mgr, false)
-	return New("test", mgr, cfg, index, nil, nil, rl, nil)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, rl, nil)
+	return srv
 }
 
 var defaultTools = []plugin.ToolDef{
@@ -232,7 +233,7 @@ func TestElicitation_WriteClientUnsupported_NonStrict(t *testing.T) {
 
 	rl, _ := ratelimit.New("1000/m", nil, "10000/m")
 	index := NewToolIndex(mgr, false)
-	srv := New("test", mgr, cfg, index, nil, nil, rl, nil)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, rl, nil)
 
 	session := &mockPlainSession{}
 	ctx := srv.WithContext(context.Background(), session)
@@ -487,7 +488,8 @@ func elicitStrictTestServer(tools []plugin.ToolDef) *mcpserver.MCPServer {
 
 	rl, _ := ratelimit.New("1000/m", nil, "10000/m")
 	index := NewToolIndex(mgr, false)
-	return New("test", mgr, cfg, index, nil, nil, rl, nil)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, rl, nil)
+	return srv
 }
 
 func TestElicitation_StrictBlocksUnsupportedClient(t *testing.T) {

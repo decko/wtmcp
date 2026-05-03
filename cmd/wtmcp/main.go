@@ -264,7 +264,7 @@ func run() error {
 	}
 
 	index := server.NewToolIndex(mgr, cfg.ReadOnly)
-	srv := server.New(Version, mgr, cfg, index, collector, auditor, pluginRL, framer)
+	srv, toolOwners := server.New(Version, mgr, cfg, index, collector, auditor, pluginRL, framer)
 
 	// Phase 2 (background): start plugin processes. The MCP server
 	// accepts requests immediately; tools for still-loading plugins
@@ -281,7 +281,7 @@ func run() error {
 	}()
 
 	// Start control directory watcher for external reload triggers
-	controlWatcher := server.NewControlWatcher(wd, srv, mgr, cfg, index, collector, auditor, pluginRL, framer)
+	controlWatcher := server.NewControlWatcher(wd, srv, mgr, cfg, index, collector, auditor, pluginRL, framer, toolOwners)
 	if err := controlWatcher.Start(); err != nil {
 		log.Printf("control watcher disabled: %v", err)
 	}

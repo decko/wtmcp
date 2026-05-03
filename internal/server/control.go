@@ -36,12 +36,13 @@ type ControlWatcher struct {
 	auditor     *audit.Logger
 	rateLimiter *ratelimit.Registry
 	framer      *OutputFramer
+	toolOwners  *ToolOwnerMap
 	stop        chan struct{}
 	done        chan struct{}
 }
 
 // NewControlWatcher creates a control watcher for the given workdir.
-func NewControlWatcher(workdir string, srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) *ControlWatcher {
+func NewControlWatcher(workdir string, srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer, toolOwners *ToolOwnerMap) *ControlWatcher {
 	controlDir := filepath.Join(workdir, "control")
 	return &ControlWatcher{
 		commandsDir: filepath.Join(controlDir, "commands"),
@@ -56,6 +57,7 @@ func NewControlWatcher(workdir string, srv *mcpserver.MCPServer, mgr *plugin.Man
 		auditor:     auditor,
 		rateLimiter: rateLimiter,
 		framer:      framer,
+		toolOwners:  toolOwners,
 		stop:        make(chan struct{}),
 		done:        make(chan struct{}),
 	}
@@ -151,7 +153,7 @@ func (w *ControlWatcher) processCommand(filename string) {
 			result["status"] = "success"
 			var reloaded []string
 			for name := range w.mgr.Manifests() {
-				if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, name, w.index, w.collector, w.auditor, w.rateLimiter, w.framer); err != nil {
+				if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, name, w.index, w.collector, w.auditor, w.rateLimiter, w.framer, w.toolOwners); err != nil {
 					result["status"] = "partial"
 					result["error"] = fmt.Sprintf("failed to reload %s: %v", name, err)
 					w.auditor.ControlAction(ctx, "reload", name, "error", err.Error())
@@ -167,7 +169,7 @@ func (w *ControlWatcher) processCommand(filename string) {
 				result["error"] = fmt.Sprintf("invalid plugin name: %v", err)
 				break
 			}
-			if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, pluginName, w.index, w.collector, w.auditor, w.rateLimiter, w.framer); err != nil {
+			if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, pluginName, w.index, w.collector, w.auditor, w.rateLimiter, w.framer, w.toolOwners); err != nil {
 				result["status"] = "error"
 				result["error"] = err.Error()
 				w.auditor.ControlAction(ctx, "reload", pluginName, "error", err.Error())

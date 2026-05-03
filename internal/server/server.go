@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -45,10 +46,44 @@ type serverDeps struct {
 	auditor     *audit.Logger
 	rateLimiter *ratelimit.Registry
 	framer      *OutputFramer
+	toolOwners  *ToolOwnerMap
+}
+
+// ToolOwnerMap tracks which plugin registered each tool name.
+// All methods are safe for concurrent use.
+type ToolOwnerMap struct {
+	mu     sync.RWMutex
+	owners map[string]string // tool name -> plugin name
+}
+
+func newToolOwnerMap() *ToolOwnerMap {
+	return &ToolOwnerMap{owners: make(map[string]string)}
+}
+
+func (m *ToolOwnerMap) owner(toolName string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.owners[toolName]
+}
+
+func (m *ToolOwnerMap) register(toolName, pluginName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.owners[toolName] = pluginName
+}
+
+func (m *ToolOwnerMap) removePlugin(pluginName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for tool, owner := range m.owners {
+		if owner == pluginName {
+			delete(m.owners, tool)
+		}
+	}
 }
 
 // New creates an MCP server with tools from all loaded plugins.
-func New(version string, manager *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) *mcpserver.MCPServer {
+func New(version string, manager *plugin.Manager, cfg *config.Config, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) (*mcpserver.MCPServer, *ToolOwnerMap) {
 	opts := []mcpserver.ServerOption{
 		mcpserver.WithToolCapabilities(true),
 		mcpserver.WithResourceCapabilities(true, true),
@@ -58,6 +93,7 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 	}
 	srv := mcpserver.NewMCPServer("wtmcp", version, opts...)
 
+	toolOwners := newToolOwnerMap()
 	deps := &serverDeps{
 		srv:         srv,
 		mgr:         manager,
@@ -67,6 +103,7 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 		auditor:     auditor,
 		rateLimiter: rateLimiter,
 		framer:      framer,
+		toolOwners:  toolOwners,
 	}
 
 	if cfg.ReadOnly {
@@ -101,7 +138,7 @@ func New(version string, manager *plugin.Manager, cfg *config.Config, index *Too
 	// tool_search — useful in both modes
 	registerToolSearch(srv, index)
 
-	return srv
+	return srv, toolOwners
 }
 
 func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
@@ -122,11 +159,20 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 			continue
 		}
 
-		tool, schemaJSON := buildMCPTool(toolDef, progressive)
 		toolName := toolDef.Name
+		plugName := manifest.Name
+
+		if deps.toolOwners != nil {
+			if existingPlugin := deps.toolOwners.owner(toolName); existingPlugin != "" && existingPlugin != plugName {
+				log.Printf("WARNING: tool %q from plugin %q skipped: already registered by plugin %q", toolName, plugName, existingPlugin)
+				skipped++
+				continue
+			}
+		}
+
+		tool, schemaJSON := buildMCPTool(toolDef, progressive)
 		format := outputFormat
 		fallback := deps.cfg.Output.ToonFallback
-		plugName := manifest.Name
 		isRead := toolDef.IsReadOnly()
 		toolAccess := toolDef.Access
 
@@ -295,6 +341,10 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 			outputText = encoding.FormatResult(callResult.Result, format, fallback)
 			return framer.frameToolResult(toolName, outputText), nil
 		})
+
+		if deps.toolOwners != nil {
+			deps.toolOwners.register(toolName, plugName)
+		}
 	}
 	if skipped > 0 && readOnly {
 		log.Printf("read-only: skipped %d write tools from %s", skipped, manifest.Name)
@@ -354,6 +404,7 @@ func registerManagementTools(deps *serverDeps) {
 	srv, mgr, cfg := deps.srv, deps.mgr, deps.cfg
 	index, collector := deps.index, deps.collector
 	auditor, rateLimiter, framer := deps.auditor, deps.rateLimiter, deps.framer
+	toolOwners := deps.toolOwners
 
 	// plugin_list: list all plugins and their status
 	srv.AddTool(
@@ -414,8 +465,8 @@ func registerManagementTools(deps *serverDeps) {
 				if err := plugin.ValidatePluginName(name); err != nil {
 					return mcp.NewToolResultError(fmt.Sprintf("invalid plugin name: %v", err)), nil
 				}
-				if err := ReloadPlugin(ctx, srv, mgr, cfg, name, index, collector, auditor, rateLimiter, framer); err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
+				if err := ReloadPlugin(ctx, srv, mgr, cfg, name, index, collector, auditor, rateLimiter, framer, toolOwners); err != nil {
+					return mcp.NewToolResultError(auditor.ScrubErrorText(err.Error())), nil
 				}
 				return mcp.NewToolResultText(fmt.Sprintf("plugin %s reloaded", name)), nil
 			},
@@ -536,8 +587,8 @@ func excludedToolNames() []string {
 //
 // The index is rebuilt to reflect manifest changes, and tool_search is
 // re-registered so its CategorySummary stays current.
-func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, name string, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer) error {
-	deps := &serverDeps{srv, mgr, cfg, index, collector, auditor, rateLimiter, framer}
+func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Manager, cfg *config.Config, name string, index *ToolIndex, collector *stats.Collector, auditor *audit.Logger, rateLimiter *ratelimit.Registry, framer *OutputFramer, toolOwners *ToolOwnerMap) error {
+	deps := &serverDeps{srv, mgr, cfg, index, collector, auditor, rateLimiter, framer, toolOwners}
 	progressive := cfg.Tools.Discovery == "progressive"
 
 	// Collect old tool names, context URIs, and provided resource URIs.
@@ -578,9 +629,14 @@ func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Man
 		return err
 	}
 
-	// Remove old tools, context resources, and provided resources
+	// Remove old tools, context resources, and provided resources.
+	// Purge collision map entries so the plugin can re-register
+	// its own tools without self-collision.
 	if len(oldToolNames) > 0 {
 		srv.DeleteTools(oldToolNames...)
+	}
+	if toolOwners != nil {
+		toolOwners.removePlugin(name)
 	}
 	if len(oldContextURIs) > 0 {
 		srv.DeleteResources(oldContextURIs...)
