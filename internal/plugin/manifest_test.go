@@ -746,3 +746,41 @@ func searchSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+func TestLoadManifest_SizeLimit(t *testing.T) {
+	dir := t.TempDir()
+	handlerPath := filepath.Join(dir, "handler.sh")
+	if err := os.WriteFile(handlerPath, []byte("#!/bin/bash\n"), 0o755); err != nil { //nolint:gosec // test
+		t.Fatal(err)
+	}
+
+	header := "name: test-plugin\nversion: \"1.0\"\nhandler: ./handler.sh\n"
+
+	t.Run("at limit accepted", func(t *testing.T) {
+		padding := strings.Repeat("#", maxManifestSize-len(header))
+		data := header + padding
+		yamlPath := filepath.Join(dir, "at-limit.yaml")
+		if err := os.WriteFile(yamlPath, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadManifest(yamlPath); err != nil {
+			t.Errorf("manifest at size limit should be accepted: %v", err)
+		}
+	})
+
+	t.Run("over limit rejected", func(t *testing.T) {
+		padding := strings.Repeat("#", maxManifestSize-len(header)+1)
+		data := header + padding
+		yamlPath := filepath.Join(dir, "over-limit.yaml")
+		if err := os.WriteFile(yamlPath, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadManifest(yamlPath)
+		if err == nil {
+			t.Fatal("manifest over size limit should be rejected")
+		}
+		if !strings.Contains(err.Error(), "byte limit") {
+			t.Errorf("expected size limit error, got: %v", err)
+		}
+	})
+}

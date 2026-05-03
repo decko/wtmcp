@@ -246,11 +246,17 @@ func (m *Manifest) HandlerPath() string {
 	return filepath.Join(m.Dir, m.Handler)
 }
 
+const maxManifestSize = 256 * 1024 // 256KB
+
 // LoadManifest reads and validates a plugin.yaml file.
 func LoadManifest(path string) (*Manifest, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // plugin loading requires reading from variable paths
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
+	}
+
+	if len(data) > maxManifestSize {
+		return nil, fmt.Errorf("manifest %s exceeds %d byte limit (%d bytes)", path, maxManifestSize, len(data))
 	}
 
 	var m Manifest
