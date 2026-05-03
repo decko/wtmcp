@@ -277,9 +277,9 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 			if err != nil {
 				var pluginErr *protocol.Error
 				if isPluginError(err, &pluginErr) {
-					outputText = fmt.Sprintf("[%s] %s", pluginErr.Code, pluginErr.Message)
+					outputText = fmt.Sprintf("[%s] %s", pluginErr.Code, auditor.ScrubErrorText(pluginErr.Message))
 				} else {
-					outputText = err.Error()
+					outputText = auditor.ScrubErrorText(err.Error())
 				}
 				isErr = true
 				errMsg = outputText

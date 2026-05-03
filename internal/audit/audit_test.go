@@ -405,3 +405,49 @@ func TestControlAction_ScrubsErrorMessages(t *testing.T) {
 	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
 	logger.ControlAction(ctx, "reload", "test", "error", "auth failed: "+jwt)
 }
+
+func TestScrubErrorText(t *testing.T) {
+	cfg := Config{Stdout: true}
+	logger, err := New(cfg)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer func() { _ = logger.Close() }()
+
+	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+
+	t.Run("redacts JWT in error", func(t *testing.T) {
+		result := logger.ScrubErrorText("auth failed: " + jwt)
+		if strings.Contains(result, "eyJ") {
+			t.Errorf("JWT should be redacted, got: %s", result)
+		}
+		if !strings.Contains(result, "[REDACTED]") {
+			t.Errorf("expected [REDACTED], got: %s", result)
+		}
+	})
+
+	t.Run("normal error unchanged", func(t *testing.T) {
+		msg := "connection refused: dial tcp 127.0.0.1:8080"
+		result := logger.ScrubErrorText(msg)
+		if result != msg {
+			t.Errorf("normal error should pass through, got: %s", result)
+		}
+	})
+
+	t.Run("short strings not over-redacted", func(t *testing.T) {
+		msg := "not found"
+		result := logger.ScrubErrorText(msg)
+		if result != msg {
+			t.Errorf("short string should not be redacted, got: %s", result)
+		}
+	})
+
+	t.Run("nil logger passthrough", func(t *testing.T) {
+		var nilLogger *Logger
+		msg := "error with " + jwt
+		result := nilLogger.ScrubErrorText(msg)
+		if result != msg {
+			t.Errorf("nil logger should pass through, got: %s", result)
+		}
+	})
+}

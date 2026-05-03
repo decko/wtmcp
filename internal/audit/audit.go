@@ -171,6 +171,14 @@ func (l *Logger) ControlAction(ctx context.Context, action, pluginName, status, 
 	l.log(ctx, attrs)
 }
 
+// ScrubErrorText redacts sensitive patterns in a plain error string.
+func (l *Logger) ScrubErrorText(s string) string {
+	if l == nil || l.scrubber == nil {
+		return s
+	}
+	return l.scrubber.ScrubString(s)
+}
+
 // Close flushes and closes the audit log file (if any).
 func (l *Logger) Close() error {
 	if l.file != nil {
