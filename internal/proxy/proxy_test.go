@@ -1317,3 +1317,77 @@ func TestRetryDelay(t *testing.T) {
 		})
 	}
 }
+
+func TestConcurrentRegisterAndExecute(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := newTestProxy(srv.Client())
+
+	var wg sync.WaitGroup
+	var noConfig atomic.Int64
+
+	for i := range 20 {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			name := "plugin"
+			if n%2 == 0 {
+				p.RegisterPlugin(name, testPluginAuth(srv.URL))
+			} else {
+				resp := p.Execute(context.Background(), name, protocol.Message{
+					ID:     "req",
+					Type:   protocol.TypeHTTPRequest,
+					Method: "GET",
+					Path:   "/test",
+				})
+				if resp.Error != nil && resp.Error.Code == "no_config" {
+					noConfig.Add(1)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	t.Logf("no_config errors (expected some): %d", noConfig.Load())
+}
+
+func TestConcurrentUnregisterAndExecute(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := newTestProxy(srv.Client())
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	var wg sync.WaitGroup
+	var ops atomic.Int64
+
+	for range 20 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			p.UnregisterPlugin("test")
+			p.RegisterPlugin("test", testPluginAuth(srv.URL))
+			ops.Add(1)
+		}()
+		go func() {
+			defer wg.Done()
+			p.Execute(context.Background(), "test", protocol.Message{
+				ID:     "req",
+				Type:   protocol.TypeHTTPRequest,
+				Method: "GET",
+				Path:   "/test",
+			})
+			ops.Add(1)
+		}()
+	}
+	wg.Wait()
+
+	if ops.Load() != 40 {
+		t.Errorf("expected 40 operations, got %d", ops.Load())
+	}
+}

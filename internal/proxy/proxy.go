@@ -17,6 +17,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"math/rand"
@@ -65,6 +66,7 @@ type PluginAuth struct {
 // Proxy executes HTTP requests on behalf of plugins, injecting
 // authentication headers and enforcing security policies.
 type Proxy struct {
+	pluginsMu     sync.RWMutex
 	plugins       map[string]*PluginAuth
 	client        *http.Client
 	privateClient *http.Client // for plugins with allow_private_ips
@@ -120,6 +122,9 @@ func (p *Proxy) SetRetryConfig(cfg config.RetryConfig) {
 // accepting tool calls (i.e., in the sequential result-collection
 // phase after Start() returns).
 func (p *Proxy) AddAllowedDomains(pluginName string, domains []string) {
+	p.pluginsMu.Lock()
+	defer p.pluginsMu.Unlock()
+
 	pa, ok := p.plugins[pluginName]
 	if !ok {
 		log.Printf("proxy: AddAllowedDomains for unknown plugin %q", pluginName)
@@ -132,6 +137,9 @@ func (p *Proxy) AddAllowedDomains(pluginName string, domains []string) {
 // the manager to install a DomainProvider after init_ok auth bindings
 // are resolved. Must be called after RegisterPlugin.
 func (p *Proxy) SetPluginProvider(pluginName string, provider auth.Provider) {
+	p.pluginsMu.Lock()
+	defer p.pluginsMu.Unlock()
+
 	pa, ok := p.plugins[pluginName]
 	if !ok {
 		log.Printf("proxy: SetPluginProvider for unknown plugin %q", pluginName)
@@ -156,12 +164,16 @@ func (p *Proxy) auditHTTP(ctx context.Context, pluginName, method, rawURL string
 
 // RegisterPlugin associates auth and HTTP config with a plugin name.
 func (p *Proxy) RegisterPlugin(name string, pa *PluginAuth) {
+	p.pluginsMu.Lock()
 	p.plugins[name] = pa
+	p.pluginsMu.Unlock()
 }
 
 // UnregisterPlugin removes a plugin's auth and HTTP config.
 func (p *Proxy) UnregisterPlugin(name string) {
+	p.pluginsMu.Lock()
 	delete(p.plugins, name)
+	p.pluginsMu.Unlock()
 }
 
 // NewKerberosClient creates an HTTP client with a cookie jar and
@@ -186,10 +198,20 @@ func NewKerberosClient(spn string, proactive bool, allowPrivateIPs bool, tlsCfg 
 
 // Execute handles an http_request message from a plugin.
 func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Message) protocol.Message {
-	pa, ok := p.plugins[pluginName]
+	p.pluginsMu.RLock()
+	ptr, ok := p.plugins[pluginName]
 	if !ok {
+		p.pluginsMu.RUnlock()
 		return errResponse(req.ID, "no_config", "no HTTP config registered for plugin "+pluginName)
 	}
+	// Snapshot value types and clone AllowedDomains so Execute works
+	// on immutable data after releasing the lock. Provider and Client
+	// are shared by design: both are concurrency-safe (write-once after
+	// init, and http.Client is documented thread-safe).
+	paCopy := *ptr
+	pa := &paCopy
+	pa.AllowedDomains = append([]string(nil), ptr.AllowedDomains...)
+	p.pluginsMu.RUnlock()
 
 	fullURL, err := p.resolveURL(pluginName, pa, req)
 	if err != nil {
