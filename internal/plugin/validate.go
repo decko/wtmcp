@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -22,14 +21,14 @@ type CompiledSchema struct {
 }
 
 // CompileParamsSchema compiles a tool's parameter schema for validation.
-// Returns nil (no validation) if the schema is empty or cannot be compiled.
-// Returns an error only if the schema is oversized.
+// Returns nil schema (no validation) if the schema has no properties.
+// Returns an error if the schema is malformed or oversized, causing the
+// caller to disable the tool.
 func CompileParamsSchema(toolName string, toolDef ToolDef) (*CompiledSchema, error) {
 	schemaMap := toolDef.ParamsSchema()
 	schemaJSON, err := json.Marshal(schemaMap)
 	if err != nil {
-		log.Printf("WARNING: [%s] schema marshal failed, skipping validation: %v", toolName, err)
-		return nil, nil //nolint:nilerr // unparseable schema → skip validation
+		return nil, fmt.Errorf("tool %s: schema marshal failed: %w", toolName, err)
 	}
 
 	if len(schemaJSON) > maxSchemaSize {
@@ -43,21 +42,18 @@ func CompileParamsSchema(toolName string, toolDef ToolDef) (*CompiledSchema, err
 
 	var schemaDoc any
 	if err := json.Unmarshal(schemaJSON, &schemaDoc); err != nil {
-		log.Printf("WARNING: [%s] schema parse failed, skipping validation: %v", toolName, err)
-		return nil, nil //nolint:nilerr // bad schema → skip validation
+		return nil, fmt.Errorf("tool %s: schema parse failed: %w", toolName, err)
 	}
 
 	compiler := jsonschema.NewCompiler()
 	compiler.UseLoader(nil)
 	if err := compiler.AddResource("schema.json", schemaDoc); err != nil {
-		log.Printf("WARNING: [%s] schema load failed, skipping validation: %v", toolName, err)
-		return nil, nil //nolint:nilerr // bad schema → skip validation
+		return nil, fmt.Errorf("tool %s: schema load failed: %w", toolName, err)
 	}
 
 	compiled, err := compiler.Compile("schema.json")
 	if err != nil {
-		log.Printf("WARNING: [%s] schema compilation failed, skipping validation: %v", toolName, err)
-		return nil, nil //nolint:nilerr // compilation error → skip validation
+		return nil, fmt.Errorf("tool %s: schema compilation failed: %w", toolName, err)
 	}
 
 	return &CompiledSchema{schema: compiled}, nil

@@ -245,3 +245,33 @@ func TestReloadPlugin_StillDisabledReRegistersStubs(t *testing.T) {
 		t.Error("stub should contain the original reason")
 	}
 }
+
+func TestBadSchema_ToolDisabledInServer(t *testing.T) {
+	mgr := plugin.NewManagerForTest()
+	mgr.SetManifest("test-plugin", &plugin.Manifest{
+		Name: "test-plugin",
+		Tools: []plugin.ToolDef{
+			{Name: "good_tool", Description: "Works fine", Access: "read",
+				Params: map[string]plugin.ParamDef{
+					"query": {Type: "string"},
+				}},
+			{Name: "bad_tool", Description: "Has broken schema", Access: "read",
+				Params: map[string]plugin.ParamDef{
+					"field": {Type: "not_a_real_type"},
+				}},
+		},
+	})
+	mgr.SetHandle("test-plugin")
+
+	cfg := config.DefaultConfig()
+	index := NewToolIndex(mgr, false)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, nil, nil)
+
+	tools := srv.ListTools()
+	if _, ok := tools["good_tool"]; !ok {
+		t.Error("good_tool should be registered")
+	}
+	if _, ok := tools["bad_tool"]; ok {
+		t.Error("bad_tool with invalid schema should NOT be registered")
+	}
+}

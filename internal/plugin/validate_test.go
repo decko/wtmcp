@@ -157,6 +157,38 @@ func TestValidateErrorMessages(t *testing.T) {
 	}
 }
 
+func TestCompileBadSchema_ReturnsError(t *testing.T) {
+	t.Run("no properties still returns nil", func(t *testing.T) {
+		tool := ToolDef{Name: "noparams"}
+		cs, err := CompileParamsSchema("noparams", tool)
+		if err != nil {
+			t.Fatalf("no-property schema should not error: %v", err)
+		}
+		if cs != nil {
+			t.Error("expected nil schema for no properties")
+		}
+	})
+
+	t.Run("invalid schema type returns error", func(t *testing.T) {
+		tool := ToolDef{
+			Name: "bad_schema",
+			Params: map[string]ParamDef{
+				"field": {Type: "not_a_real_type", Required: true},
+			},
+		}
+		cs, err := CompileParamsSchema("bad_schema", tool)
+		if err == nil {
+			t.Fatal("expected error for invalid schema type")
+		}
+		if cs != nil {
+			t.Error("expected nil compiled schema on error")
+		}
+		if !strings.Contains(err.Error(), "schema compilation failed") {
+			t.Errorf("expected 'schema compilation failed' in error, got: %v", err)
+		}
+	})
+}
+
 func TestValidateNilSchema(t *testing.T) {
 	var cs *CompiledSchema
 	if err := cs.Validate(json.RawMessage(`{"anything":"goes"}`)); err != nil {
