@@ -168,8 +168,10 @@ audit:
 - **MCP Elicitation** (enabled by default) prompts the user for
   confirmation before executing any write tool. The confirmation
   message shows the tool name and scrubbed parameters. Clients
-  that lack elicitation support fall through gracefully. Disable
-  with `security.elicitation: false`
+  that lack elicitation support are blocked by default
+  (`elicitation_strict: true`). Disable elicitation entirely with
+  `security.elicitation: false`, or allow fallthrough for clients
+  without elicitation support with `security.elicitation_strict: false`
 - **Output framing** (enabled by default) with per-session
   cryptographic nonce — injected tags in plugin output are detected
   and escaped. Disable with `security.tag_tool_output: false`
@@ -185,8 +187,9 @@ audit:
 
 ```yaml
 security:
-  elicitation: true      # confirm before write tools (default: true)
-  tag_tool_output: true  # nonce-based output tagging (default: true)
+  elicitation: true        # confirm before write tools (default: true)
+  elicitation_strict: true # block writes if client lacks elicitation (default: true)
+  tag_tool_output: true    # nonce-based output tagging (default: true)
 ```
 
 ### Credential Isolation
