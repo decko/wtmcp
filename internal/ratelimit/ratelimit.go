@@ -12,12 +12,16 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const defaultMaxEntries = 1024
+
 // Registry manages rate limiters by key (plugin name, domain, or "global").
 type Registry struct {
-	mu       sync.RWMutex
-	limiters map[string]*rate.Limiter
-	defaults map[string]rate.Limit
-	global   *rate.Limiter
+	mu         sync.RWMutex
+	limiters   map[string]*rate.Limiter
+	order      []string // FIFO insertion order; oldest evicted first
+	maxEntries int
+	defaults   map[string]rate.Limit
+	global     *rate.Limiter
 }
 
 // New creates a Registry from configuration strings.
@@ -45,8 +49,9 @@ func New(defaultRate string, overrides map[string]string, globalRate string) (*R
 	}
 
 	r := &Registry{
-		limiters: make(map[string]*rate.Limiter),
-		defaults: defaults,
+		limiters:   make(map[string]*rate.Limiter),
+		maxEntries: defaultMaxEntries,
+		defaults:   defaults,
 	}
 
 	if globalRate != "" {
@@ -117,9 +122,23 @@ func (r *Registry) getLimiter(key string) *rate.Limiter {
 		return l
 	}
 
+	if len(r.order) >= r.maxEntries {
+		evict := r.order[0]
+		r.order = r.order[1:]
+		delete(r.limiters, evict)
+	}
+
 	l = rate.NewLimiter(limit, burstFor(limit))
 	r.limiters[key] = l
+	r.order = append(r.order, key)
 	return l
+}
+
+// Len returns the number of active limiters.
+func (r *Registry) Len() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.limiters)
 }
 
 func burstFor(limit rate.Limit) int {

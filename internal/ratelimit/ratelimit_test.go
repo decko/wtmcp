@@ -169,6 +169,66 @@ func TestRegistryConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
+func TestEvictionAtMaxEntries(t *testing.T) {
+	r, err := New("10/s", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.maxEntries = 5
+
+	for i := range 10 {
+		r.Allow(fmt.Sprintf("key-%d", i))
+	}
+
+	if r.Len() > 5 {
+		t.Errorf("Len() = %d, want <= 5", r.Len())
+	}
+}
+
+func TestEvictedKeyGetsFreshLimiter(t *testing.T) {
+	r, err := New("1/s", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.maxEntries = 2
+
+	r.Allow("a")
+	r.Allow("a") // exhaust burst for "a"
+
+	// Fill with other keys to evict "a"
+	r.Allow("b")
+	r.Allow("c") // evicts "a"
+
+	// "a" should get a fresh limiter with full burst
+	if d := r.Allow("a"); d != 0 {
+		t.Errorf("evicted key should get fresh limiter, got delay %v", d)
+	}
+}
+
+func TestEvictionConcurrent(t *testing.T) {
+	r, err := New("10/s", nil, "100/s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.maxEntries = 10
+
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := range 20 {
+				r.Allow(fmt.Sprintf("key-%d-%d", n, j))
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	if r.Len() > 10 {
+		t.Errorf("Len() = %d, want <= 10", r.Len())
+	}
+}
+
 func TestBurstFor(t *testing.T) {
 	if b := burstFor(0.5); b != 1 {
 		t.Errorf("burstFor(0.5) = %d, want 1", b)
