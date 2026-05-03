@@ -1391,3 +1391,48 @@ func TestConcurrentUnregisterAndExecute(t *testing.T) {
 		t.Errorf("expected 40 operations, got %d", ops.Load())
 	}
 }
+
+func TestAddAllowedDomainsDeduplicate(t *testing.T) {
+	p := newTestProxy(nil)
+	p.RegisterPlugin("test", &PluginAuth{AllowedDomains: []string{"example.com"}})
+
+	p.AddAllowedDomains("test", []string{"example.com", "new.com"})
+
+	p.pluginsMu.RLock()
+	pa := p.plugins["test"]
+	p.pluginsMu.RUnlock()
+
+	if len(pa.AllowedDomains) != 2 {
+		t.Errorf("expected 2 domains (deduped), got %d: %v", len(pa.AllowedDomains), pa.AllowedDomains)
+	}
+}
+
+func TestAddAllowedDomainsCaseInsensitive(t *testing.T) {
+	p := newTestProxy(nil)
+	p.RegisterPlugin("test", &PluginAuth{AllowedDomains: []string{"example.com"}})
+
+	p.AddAllowedDomains("test", []string{"Example.COM"})
+
+	p.pluginsMu.RLock()
+	pa := p.plugins["test"]
+	p.pluginsMu.RUnlock()
+
+	if len(pa.AllowedDomains) != 1 {
+		t.Errorf("case-insensitive dedup failed, got %d: %v", len(pa.AllowedDomains), pa.AllowedDomains)
+	}
+}
+
+func TestAddAllowedDomainsNewDomain(t *testing.T) {
+	p := newTestProxy(nil)
+	p.RegisterPlugin("test", &PluginAuth{AllowedDomains: []string{"a.com"}})
+
+	p.AddAllowedDomains("test", []string{"b.com"})
+
+	p.pluginsMu.RLock()
+	pa := p.plugins["test"]
+	p.pluginsMu.RUnlock()
+
+	if len(pa.AllowedDomains) != 2 {
+		t.Errorf("expected 2 domains, got %d: %v", len(pa.AllowedDomains), pa.AllowedDomains)
+	}
+}

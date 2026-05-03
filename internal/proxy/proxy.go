@@ -130,7 +130,11 @@ func (p *Proxy) AddAllowedDomains(pluginName string, domains []string) {
 		log.Printf("proxy: AddAllowedDomains for unknown plugin %q", pluginName)
 		return
 	}
-	pa.AllowedDomains = append(pa.AllowedDomains, domains...)
+	for _, d := range domains {
+		if !containsDomain(pa.AllowedDomains, d) {
+			pa.AllowedDomains = append(pa.AllowedDomains, d)
+		}
+	}
 }
 
 // SetPluginProvider replaces the auth provider for a plugin. Used by
@@ -561,6 +565,15 @@ func (p *Proxy) readBody(resp *http.Response) (json.RawMessage, string, error) {
 	encoded := base64.StdEncoding.EncodeToString(body)
 	b, err := json.Marshal(encoded)
 	return json.RawMessage(b), "base64", err
+}
+
+func containsDomain(domains []string, d string) bool {
+	for _, existing := range domains {
+		if strings.EqualFold(existing, d) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Proxy) isDomainAllowed(_ string, pa *PluginAuth, rawURL string) bool {
