@@ -15,6 +15,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	maxToolDescriptionLen  = 4096
+	maxParamDescriptionLen = 1024
+)
+
 // pluginNamePattern defines valid plugin names:
 // lowercase alphanumeric, hyphens, underscores, 2-64 chars.
 var pluginNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$`)
@@ -390,11 +395,19 @@ func (m *Manifest) Validate() error {
 		if tool.Name == "" {
 			return fmt.Errorf("tool name is required")
 		}
+		if len(tool.Description) > maxToolDescriptionLen {
+			return fmt.Errorf("tool %s: description exceeds %d bytes", tool.Name, maxToolDescriptionLen)
+		}
 		if tool.Access != "" && tool.Access != "read" && tool.Access != "write" {
 			return fmt.Errorf("tool %s: access must be 'read' or 'write', got %q", tool.Name, tool.Access)
 		}
 		if tool.Visibility != "" && tool.Visibility != "primary" && tool.Visibility != "deferred" {
 			return fmt.Errorf("tool %s: visibility must be 'primary' or 'deferred', got %q", tool.Name, tool.Visibility)
+		}
+		for pname, param := range tool.Params {
+			if len(param.Description) > maxParamDescriptionLen {
+				return fmt.Errorf("tool %s param %s: description exceeds %d bytes", tool.Name, pname, maxParamDescriptionLen)
+			}
 		}
 	}
 

@@ -224,6 +224,16 @@ func TestManifestValidation(t *testing.T) {
 			yaml:    `name: ok-name` + "\nversion: '1.0'\nhandler: ./handler\ntools: []\nservices:\n  http:\n    tls:\n      client_cert: /tmp/cert.pem\n      client_key: /tmp/key.pem\n  auth:\n    select: auto\n    variants:\n      v1:\n        type: bearer\n        token: xyz",
 			wantErr: "client_cert (mTLS) and services.auth cannot both be set",
 		},
+		{
+			name:    "tool description too long",
+			yaml:    `name: ok-name` + "\nversion: '1.0'\nhandler: ./handler\ntools:\n  - name: big_tool\n    description: '" + strings.Repeat("x", 4097) + "'",
+			wantErr: "description exceeds",
+		},
+		{
+			name:    "param description too long",
+			yaml:    `name: ok-name` + "\nversion: '1.0'\nhandler: ./handler\ntools:\n  - name: ok_tool\n    description: short\n    params:\n      arg1:\n        type: string\n        description: '" + strings.Repeat("x", 1025) + "'",
+			wantErr: "description exceeds",
+		},
 	}
 
 	for _, tt := range tests {
@@ -242,6 +252,24 @@ func TestManifestValidation(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDescriptionLengthAtLimit(t *testing.T) {
+	dir := t.TempDir()
+	handlerPath := filepath.Join(dir, "handler")
+	if err := os.WriteFile(handlerPath, []byte("#!/bin/bash\n"), 0o755); err != nil { //nolint:gosec // test needs executable
+		t.Fatal(err)
+	}
+
+	yaml := `name: ok-name` + "\nversion: '1.0'\nhandler: ./handler\ntools:\n  - name: ok_tool\n    description: '" + strings.Repeat("x", 4096) + "'\n    params:\n      arg1:\n        type: string\n        description: '" + strings.Repeat("x", 1024) + "'"
+	path := filepath.Join(dir, "plugin.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil { //nolint:gosec // test config file
+		t.Fatal(err)
+	}
+	_, err := LoadManifest(path)
+	if err != nil {
+		t.Errorf("descriptions at exact limit should be accepted: %v", err)
 	}
 }
 
