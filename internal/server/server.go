@@ -108,6 +108,7 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 	progressive := deps.cfg.Tools.Discovery == "progressive"
 	readOnly := deps.cfg.ReadOnly
 	elicitation := deps.cfg.Security.ElicitationEnabled()
+	elicitationStrict := deps.cfg.Security.ElicitationStrictEnabled()
 
 	outputFormat := deps.cfg.Output.Format
 	if manifest.Output.Format != "" {
@@ -231,12 +232,13 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 				var elicitBlock bool
 				switch {
 				case errors.Is(elicitErr, mcpserver.ErrElicitationNotSupported):
-					// Client doesn't support elicitation — fall through
-					// and execute without confirmation. This allows write
-					// tools to work with older clients that lack the
-					// elicitation capability.
 					elicitAction = "unsupported"
-					log.Printf("[%s] elicitation not supported by client", plugName)
+					if elicitationStrict {
+						elicitBlock = true
+						log.Printf("[%s] elicitation not supported by client (strict mode: blocking write)", plugName)
+					} else {
+						log.Printf("[%s] elicitation not supported by client", plugName)
+					}
 				case elicitErr != nil:
 					elicitAction = "error"
 					elicitBlock = true
@@ -257,9 +259,12 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 				}
 
 				if elicitBlock {
-					if elicitAction == "error" {
+					switch elicitAction {
+					case "error":
 						outputText = fmt.Sprintf("%s: confirmation failed, please try again", toolName)
-					} else {
+					case "unsupported":
+						outputText = fmt.Sprintf("%s: write tools require elicitation support", toolName)
+					default:
 						outputText = fmt.Sprintf("%s: operation declined by user", toolName)
 					}
 					isErr = true

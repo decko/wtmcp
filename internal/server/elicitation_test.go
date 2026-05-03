@@ -434,3 +434,55 @@ func TestTruncateJSON_ExactBoundary(t *testing.T) {
 		t.Error("output at exactly maxLen should not be truncated")
 	}
 }
+
+func elicitStrictTestServer(tools []plugin.ToolDef) *mcpserver.MCPServer {
+	mgr := plugin.NewManagerForTest()
+	mgr.SetManifest("test-plugin", &plugin.Manifest{
+		Name:      "test-plugin",
+		Execution: "oneshot",
+		Tools:     tools,
+	})
+	mgr.SetHandle("test-plugin")
+
+	cfg := config.DefaultConfig()
+	elicitation := true
+	strict := true
+	cfg.Security.Elicitation = &elicitation
+	cfg.Security.ElicitationStrict = &strict
+
+	rl, _ := ratelimit.New("1000/m", nil, "10000/m")
+	index := NewToolIndex(mgr, false)
+	return New("test", mgr, cfg, index, nil, nil, rl, nil)
+}
+
+func TestElicitation_StrictBlocksUnsupportedClient(t *testing.T) {
+	srv := elicitStrictTestServer(defaultTools)
+	session := &mockPlainSession{}
+	ctx := srv.WithContext(context.Background(), session)
+
+	resp := callTool(ctx, srv, "test_write")
+	text, isErr := extractToolText(resp)
+
+	if !isErr {
+		t.Error("strict mode should block write tools when client lacks elicitation")
+	}
+	if !strings.Contains(text, "write tools require elicitation support") {
+		t.Errorf("expected strict-mode message, got: %s", text)
+	}
+}
+
+func TestElicitation_StrictAllowsReadTools(t *testing.T) {
+	srv := elicitStrictTestServer(defaultTools)
+	session := &mockPlainSession{}
+	ctx := srv.WithContext(context.Background(), session)
+
+	resp := callTool(ctx, srv, "test_read")
+	text, isErr := extractToolText(resp)
+
+	if !isErr {
+		t.Error("expected error from tool execution (no handler), got success")
+	}
+	if strings.Contains(text, "elicitation") {
+		t.Errorf("read tools should not be affected by strict mode, got: %s", text)
+	}
+}

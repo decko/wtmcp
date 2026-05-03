@@ -109,8 +109,9 @@ type StatsConfig struct {
 
 // SecurityConfig controls prompt injection defense features.
 type SecurityConfig struct {
-	TagToolOutput *bool `yaml:"tag_tool_output"`
-	Elicitation   *bool `yaml:"elicitation"`
+	TagToolOutput     *bool `yaml:"tag_tool_output"`
+	Elicitation       *bool `yaml:"elicitation"`
+	ElicitationStrict *bool `yaml:"elicitation_strict"`
 }
 
 // TagToolOutputEnabled returns whether tool output tagging is enabled
@@ -129,6 +130,16 @@ func (s SecurityConfig) ElicitationEnabled() bool {
 		return true
 	}
 	return *s.Elicitation
+}
+
+// ElicitationStrictEnabled returns whether write tools should be
+// blocked when the MCP client does not support elicitation
+// (default: false -- allow execution with a warning).
+func (s SecurityConfig) ElicitationStrictEnabled() bool {
+	if s.ElicitationStrict == nil {
+		return false
+	}
+	return *s.ElicitationStrict
 }
 
 // AuditConfig controls security audit logging.
@@ -267,6 +278,10 @@ func Load(configPath, workdir string) (*Config, error) {
 		log.Printf("WARNING: http.timeout (%s) >= plugins.tool_call_timeout (%s); "+
 			"HTTP requests may outlive tool calls, reducing cancellation effectiveness",
 			cfg.HTTP.Timeout, cfg.Plugins.ToolCallTimeout)
+	}
+
+	if cfg.Security.ElicitationStrictEnabled() && !cfg.Security.ElicitationEnabled() {
+		log.Printf("WARNING: security.elicitation_strict has no effect when security.elicitation is disabled")
 	}
 
 	applyWorkdirDefaults(cfg, workdir)
