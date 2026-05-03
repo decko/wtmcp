@@ -28,7 +28,7 @@ func CompileParamsSchema(toolName string, toolDef ToolDef) (*CompiledSchema, err
 	schemaMap := toolDef.ParamsSchema()
 	schemaJSON, err := json.Marshal(schemaMap)
 	if err != nil {
-		log.Printf("[%s] schema marshal failed, skipping validation: %v", toolName, err)
+		log.Printf("WARNING: [%s] schema marshal failed, skipping validation: %v", toolName, err)
 		return nil, nil //nolint:nilerr // unparseable schema → skip validation
 	}
 
@@ -43,20 +43,20 @@ func CompileParamsSchema(toolName string, toolDef ToolDef) (*CompiledSchema, err
 
 	var schemaDoc any
 	if err := json.Unmarshal(schemaJSON, &schemaDoc); err != nil {
-		log.Printf("[%s] schema parse failed, skipping validation: %v", toolName, err)
+		log.Printf("WARNING: [%s] schema parse failed, skipping validation: %v", toolName, err)
 		return nil, nil //nolint:nilerr // bad schema → skip validation
 	}
 
 	compiler := jsonschema.NewCompiler()
 	compiler.UseLoader(nil)
 	if err := compiler.AddResource("schema.json", schemaDoc); err != nil {
-		log.Printf("[%s] schema load failed, skipping validation: %v", toolName, err)
+		log.Printf("WARNING: [%s] schema load failed, skipping validation: %v", toolName, err)
 		return nil, nil //nolint:nilerr // bad schema → skip validation
 	}
 
 	compiled, err := compiler.Compile("schema.json")
 	if err != nil {
-		log.Printf("[%s] schema compilation failed, skipping validation: %v", toolName, err)
+		log.Printf("WARNING: [%s] schema compilation failed, skipping validation: %v", toolName, err)
 		return nil, nil //nolint:nilerr // compilation error → skip validation
 	}
 

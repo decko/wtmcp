@@ -114,7 +114,7 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 		outputFormat = manifest.Output.Format
 	}
 
-	var skipped int
+	var skipped, unvalidated int
 	for _, toolDef := range manifest.Tools {
 		if readOnly && !toolDef.IsReadOnly() {
 			skipped++
@@ -141,6 +141,9 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 			log.Printf("[%s] %v — tool disabled", plugName, err)
 			skipped++
 			continue
+		}
+		if validator == nil {
+			unvalidated++
 		}
 
 		if collector != nil {
@@ -290,6 +293,9 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 	}
 	if skipped > 0 && readOnly {
 		log.Printf("read-only: skipped %d write tools from %s", skipped, manifest.Name)
+	}
+	if unvalidated > 0 {
+		log.Printf("WARNING: [%s] %d tools registered without parameter validation", manifest.Name, unvalidated)
 	}
 }
 
