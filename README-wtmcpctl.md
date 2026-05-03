@@ -1,245 +1,267 @@
-# wtmcpctl - Plugin Management CLI
+# wtmcpctl
 
-`wtmcpctl` is a command-line utility for managing OAuth authentication for wtmcp plugins.
+Command-line tool for managing wtmcp: agent configuration, plugin
+and provider state, OAuth authentication, credential vault
+encryption, and usage statistics.
 
-## Quick Start
+## Installation
 
 ```bash
-# Build the tool
 make build
-
-# List OAuth plugins and their authentication status
-./wtmcpctl oauth list
-
-# Authenticate a single plugin
-./wtmcpctl oauth auth google-drive
-
-# Authenticate multiple plugins
-./wtmcpctl oauth auth google-drive google-calendar
-
-# Authenticate all non-authenticated plugins
-./wtmcpctl oauth auth --all
-
-# Use a custom working directory
-./wtmcpctl --workdir /path/to/workdir oauth list
 ```
 
-## Features
+This creates `wtmcpctl` in the `bin/` directory.
 
-- **Automatic plugin discovery**: Discovers OAuth-enabled plugins by reading their `plugin.yaml` manifests
-- **OAuth2 flow automation**: Opens your browser for authorization and handles the callback automatically
-- **Token management**: Saves access and refresh tokens to the location specified in each plugin's manifest
-- **Status checking**: View authentication status for all OAuth-enabled plugins
-- **Custom workdir support**: Use `--workdir` to manage plugins in different directories
+## Global Flags
+
+| Flag | Description |
+|---|---|
+| `--workdir <path>` | Override the wtmcp working directory (default: `~/.local/share/wtmcp`) |
+| `--verbose`, `-v` | Show verbose output (discovery logs, etc.) |
+| `--version` | Show version information |
 
 ## Commands
 
-### oauth list
+### agent
 
-Lists all OAuth-enabled plugins and their authentication status.
-
-```bash
-wtmcpctl oauth list
-```
-
-**Output:**
-```
-OAuth Plugin Status:
-
-  ✓  google-drive          authenticated (valid)
-  ✓  google-calendar       authenticated (needs refresh)
-  ✗  google-gmail          not authenticated
-
-Credentials directory: /home/user/.config/wtmcp/credentials/google
-```
-
-Status indicators:
-- ✓ - Plugin is authenticated with a valid token
-- ! - Plugin has a token but it may be invalid or expired
-- ✗ - Plugin is not authenticated
-
-### oauth auth
-
-Authenticates one or more plugins using Google OAuth consent flow.
+Configure wtmcp as an MCP server for AI agents.
 
 ```bash
-wtmcpctl oauth auth <plugin-name> [<plugin-name>...]
-wtmcpctl oauth auth --all
-wtmcpctl oauth auth -a
+wtmcpctl agent enable <agent>    # Add wtmcp to agent's MCP config
+wtmcpctl agent disable <agent>   # Remove wtmcp from agent's MCP config
 ```
 
-**Arguments:**
-- `<plugin-name>` - One or more plugin names to authenticate (e.g., `google-drive`, `google-calendar`)
-- `--all` or `-a` - Authenticate all non-authenticated plugins
+**Supported agents:** `claude` (or `claude-code`), `gemini`, `cursor`
 
-**Example - Single plugin:**
+**Flags:**
+
+| Flag | Command | Description |
+|---|---|---|
+| `--dir`, `-d` | enable, disable | Project directory (default: current directory) |
+| `--read-only` | enable | Configure in read-only mode |
+
+**Config file locations:**
+- Claude/Claude Code: `<dir>/.mcp.json`
+- Gemini: `<dir>/.gemini/settings.json`
+- Cursor: `<dir>/.cursor/mcp.json`
+
+**Examples:**
+
 ```bash
-$ wtmcpctl oauth auth google-drive
-Authenticating plugin: google-drive
-
-Starting OAuth2 flow...
-Your browser will open automatically for authorization.
-
-[Browser opens automatically]
-[User authorizes in browser]
-[Browser shows success message and can be closed]
-
-✓ Successfully authenticated google-drive
-Token saved to: /home/user/.config/wtmcp/credentials/google/token-drive.json
+wtmcpctl agent enable claude            # Enable for Claude in current dir
+wtmcpctl agent enable gemini -d ~/proj  # Enable for Gemini in ~/proj
+wtmcpctl agent enable cursor --read-only
+wtmcpctl agent disable claude
 ```
-
-**Example - Multiple plugins:**
-```bash
-$ wtmcpctl oauth auth google-drive google-calendar
-Authenticating plugin: google-drive
-
-Starting OAuth2 flow...
-Your browser will open automatically for authorization.
-
-✓ Successfully authenticated google-drive
-Token saved to: /home/user/.config/wtmcp/credentials/google/token-drive.json
 
 ---
 
-Authenticating plugin: google-calendar
+### oauth
 
-Starting OAuth2 flow...
-Your browser will open automatically for authorization.
+Manage OAuth authentication for plugins that use OAuth2 flows
+(Google Calendar, Google Docs, Google Drive, Google Gmail).
 
-✓ Successfully authenticated google-calendar
-Token saved to: /home/user/.config/wtmcp/credentials/google/token-calendar.json
+```bash
+wtmcpctl oauth list                   # Show OAuth plugins and auth status
+wtmcpctl oauth auth [name...]         # Authenticate one or more plugins
+wtmcpctl oauth credentials <service>  # Interactive credential setup wizard
+```
+
+**Flags:**
+
+| Flag | Command | Description |
+|---|---|---|
+| `--all`, `-a` | auth | Authenticate all discovered OAuth plugins |
+
+**Examples:**
+
+```bash
+wtmcpctl oauth list                     # Show all OAuth plugins and status
+wtmcpctl oauth auth google-drive        # Authenticate a single plugin
+wtmcpctl oauth auth --all              # Authenticate all plugins
+wtmcpctl oauth credentials google       # Interactive Google OAuth setup
+```
+
+#### OAuth Credentials Setup
+
+The `oauth credentials google` wizard walks through:
+
+1. Creating a Google Cloud project
+2. Enabling required APIs (Calendar, Docs, Drive, Gmail)
+3. Configuring the OAuth consent screen
+4. Creating OAuth client credentials
+5. Downloading and installing the credentials JSON
 
 ---
 
-Authentication Summary:
-  Success: 2/2
-```
+### plugin
 
-## Setup
-
-### Prerequisites
-
-Before authenticating plugins, you need to set up OAuth credentials:
-
-1. **Create a Google Cloud Project** (if you don't have one):
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project
-
-2. **Enable Required APIs**:
-   - Google Drive API (for google-drive plugin)
-   - Google Calendar API (for google-calendar plugin)
-   - Gmail API (for google-gmail plugin)
-
-3. **Create OAuth 2.0 Credentials**:
-   - Go to "APIs & Services" > "Credentials"
-   - Click "Create Credentials" > "OAuth client ID"
-   - Choose "Desktop app" as the application type
-   - Download the credentials JSON file
-   - Note: No need to configure redirect URIs - oauth2flow handles this automatically with a local callback server
-
-4. **Set up the credentials file**:
-   Each plugin specifies its credentials file in `plugin.yaml` via `services.auth.credentials_file`. For Google plugins, this is typically `client-credentials.json`:
-   ```bash
-   mkdir -p ~/.config/wtmcp/credentials/google
-   cp ~/Downloads/client_secret_*.json ~/.config/wtmcp/credentials/google/client-credentials.json
-   ```
-
-   Or set a custom credentials directory:
-   ```bash
-   export GOOGLE_CREDENTIALS_DIR=/path/to/your/credentials
-   ```
-
-## OAuth Flow
-
-The authentication process follows these steps:
-
-1. `wtmcpctl` discovers plugins and reads their OAuth configuration from `plugin.yaml` (credentials file path, token file path, and scopes)
-2. Reads the OAuth client credentials from the specified credentials file (e.g., `client-credentials.json`)
-3. Starts a local HTTP server to handle the OAuth callback
-4. Opens your default browser to the Google authorization page
-5. User authorizes the application in the browser
-6. Google redirects back to the local server with an authorization code
-7. `wtmcpctl` automatically exchanges the code for access and refresh tokens
-8. Tokens are saved to the plugin's specified token file with restricted permissions (0600)
-9. The local server shuts down automatically
-
-This automatic OAuth flow is powered by [oauth2flow](https://github.com/LeGambiArt/oauth2flow), which handles the browser interaction and callback server management.
-
-## Token Files
-
-Token files are stored in the credentials directory (default: `~/.config/wtmcp/credentials/google/`):
-
-- `token-drive.json` - Google Drive authentication token
-- `token-calendar.json` - Google Calendar authentication token
-- `token-gmail.json` - Gmail authentication token
-
-These files contain:
-- Access token (for API requests)
-- Refresh token (for automatic token renewal)
-- Token expiry timestamp
-- Token type
-
-## OAuth Scopes
-
-Each plugin declares its required OAuth scopes in its `plugin.yaml` manifest. Current Google plugin scopes:
-
-| Plugin | Scopes |
-|--------|--------|
-| google-drive | `https://www.googleapis.com/auth/drive.readonly` |
-| google-calendar | `https://www.googleapis.com/auth/calendar` |
-| google-gmail | `https://www.googleapis.com/auth/gmail.modify` |
-
-## Global Options
-
-### --workdir
-
-Specify a custom working directory for plugin discovery and credentials:
+Manage which plugins are loaded. Supports two modes:
+**blocklist** (default -- all plugins loaded except disabled ones)
+and **allowlist** (`plugin only` -- only listed plugins loaded).
 
 ```bash
-wtmcpctl --workdir /path/to/workdir oauth list
+wtmcpctl plugin                        # Interactive TUI (multi-select)
+wtmcpctl plugin list                   # List plugins and status
+wtmcpctl plugin enable <name...>       # Enable plugins
+wtmcpctl plugin disable <name...>      # Disable plugins
+wtmcpctl plugin only <name...>         # Set allowlist
 ```
 
-When `--workdir` is specified:
-- Plugin discovery uses `<workdir>/plugins/`
-- Credentials are stored in `<workdir>/credentials/google/` (unless `GOOGLE_CREDENTIALS_DIR` is set)
-- Configuration is read from `<workdir>/config.yaml`
+**Flags:**
 
-Default workdir: `~/.config/wtmcp`
+| Flag | Command | Description |
+|---|---|---|
+| `--plain`, `-p` | list | Plain text output (no colors or borders) |
+| `--clear` | only | Remove allowlist, return to blocklist mode |
+
+**Examples:**
+
+```bash
+wtmcpctl plugin                        # Interactive enable/disable
+wtmcpctl plugin list                   # Show all plugins and status
+wtmcpctl plugin disable confluence     # Disable a plugin
+wtmcpctl plugin only jira github       # Load only jira and github
+wtmcpctl plugin only --clear           # Remove allowlist
+```
+
+---
+
+### provider
+
+Manage auth provider enable/disable state. Providers handle
+authentication for plugin HTTP requests (bearer tokens, basic
+auth, Kerberos/SPNEGO, OAuth2, refresh tokens).
+
+```bash
+wtmcpctl provider list                 # List providers and status
+wtmcpctl provider enable <name...>     # Enable providers
+wtmcpctl provider disable <name...>    # Disable providers
+```
+
+**Flags:**
+
+| Flag | Command | Description |
+|---|---|---|
+| `--json` | list | JSON output |
+| `--plain`, `-p` | list | Plain text output (no colors or borders) |
+
+**Examples:**
+
+```bash
+wtmcpctl provider list                 # Show providers, variants, used-by
+wtmcpctl provider disable kerberos     # Disable Kerberos auth
+wtmcpctl provider enable bearer        # Re-enable bearer auth
+```
+
+---
+
+### stats
+
+View tool usage statistics from the last server session.
+
+```bash
+wtmcpctl stats                         # Show tool usage summary
+wtmcpctl stats config                  # View stats configuration
+wtmcpctl stats config set <key> <val>  # Set a config field
+wtmcpctl stats reset                   # Clear accumulated stats
+```
+
+**Flags:**
+
+| Flag | Command | Description |
+|---|---|---|
+| `--schemas` | stats | Include tool schema token costs |
+| `--resources` | stats | Include resource read stats |
+| `--sort`, `-s` | stats | Sort by: `calls`, `tokens`, `errors`, `name` (default: calls) |
+| `--plain`, `-p` | stats | Plain text output |
+| `--json` | stats | Raw JSON output |
+| `--since` | stats | Show stats from date (YYYY-MM-DD) |
+| `--until` | stats | Show stats until date (YYYY-MM-DD) |
+| `--days`, `-d` | stats | Show stats for last N days (today = 1) |
+| `--plugin`, `-P` | stats | Filter to a single plugin |
+
+**Config keys** (for `stats config set`):
+
+| Key | Type | Description |
+|---|---|---|
+| `enabled` | bool | Enable/disable stats collection |
+| `tokenizer` | string | Token counting method (`chars`) |
+| `log_calls` | bool | Log individual tool call durations |
+| `persist` | bool | Persist stats to disk across sessions |
+| `retention_days` | int | Days to retain daily stats |
+
+**Examples:**
+
+```bash
+wtmcpctl stats                         # Summary of all tool usage
+wtmcpctl stats --sort tokens           # Sort by token consumption
+wtmcpctl stats --days 7 --schemas      # Last week with schema costs
+wtmcpctl stats --plugin jira --json    # Jira stats as JSON
+wtmcpctl stats config set persist true # Enable persistence
+wtmcpctl stats reset                   # Clear all stats
+```
+
+---
+
+### vault
+
+Encrypt and decrypt files using Ansible Vault format. Compatible
+with `ansible-vault` -- encrypted files can be used interchangeably.
+
+```bash
+wtmcpctl vault encrypt <file...>       # Encrypt files
+wtmcpctl vault decrypt <file...>       # Decrypt files
+wtmcpctl vault view <file>             # View decrypted content to stdout
+```
+
+**Persistent flags** (available on all vault subcommands):
+
+| Flag | Description |
+|---|---|
+| `--vault-password-file <path>` | Read vault password from file |
+| `--ask-vault-pass` | Prompt for vault password interactively |
+
+**Flags:**
+
+| Flag | Command | Description |
+|---|---|---|
+| `--vault-id <label>` | encrypt | Vault ID label (uses Vault 1.2 format) |
+| `--check` | decrypt | Verify decryption without modifying the file |
+
+**Password resolution priority:**
+
+1. `--vault-password-file` flag
+2. `WTMCP_VAULT_PASSWORD` environment variable
+3. Config file `secrets.vault_password_file`
+4. Interactive terminal prompt
+
+**Examples:**
+
+```bash
+wtmcpctl vault encrypt env.d/jira.env
+wtmcpctl vault encrypt env.d/*.env --vault-id prod
+wtmcpctl vault decrypt env.d/jira.env --check
+wtmcpctl vault view env.d/jira.env
+wtmcpctl vault encrypt credentials/jira/client-credentials.json \
+  --vault-password-file ~/.vault_pass
+```
+
+---
+
+### version
+
+```bash
+wtmcpctl version                       # Show version and build date
+```
 
 ## Environment Variables
 
-- `GOOGLE_CREDENTIALS_DIR` - Custom directory for Google credentials (overrides `<workdir>/credentials/google/`)
-
-## Troubleshooting
-
-### "client credentials not found" error
-
-The plugin's specified credentials file (e.g., `client-credentials.json`) is missing. You need to set up OAuth credentials first. See the [Prerequisites](#prerequisites) section.
-
-### Invalid or expired token
-
-Re-authenticate the plugin:
-```bash
-wtmcpctl oauth auth <plugin-name>
-```
-
-### Permission denied errors
-
-Ensure the credentials directory has proper permissions:
-```bash
-chmod 700 ~/.config/wtmcp/credentials/google
-chmod 600 ~/.config/wtmcp/credentials/google/*.json
-```
-
-## Security
-
-- Token files are created with restrictive permissions (0600) to prevent unauthorized access
-- The credentials directory is created with 0700 permissions
-- Never commit token files or client credentials to version control
-- Add the credentials directory to `.gitignore`
+| Variable | Description |
+|---|---|
+| `WTMCP_VAULT_PASSWORD` | Vault password (cleared from env after first read) |
+| `GOOGLE_CREDENTIALS_DIR` | Override Google OAuth credentials directory |
 
 ## See Also
 
-- [wtmcp README](README.md)
-- [wtmcpctl Architecture](docs/wtmcpctl.md)
-- [Google OAuth 2.0 Documentation](https://developers.google.com/identity/protocols/oauth2)
+- [wtmcp README](README.md) -- main server documentation
