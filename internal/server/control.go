@@ -154,8 +154,10 @@ func (w *ControlWatcher) processCommand(filename string) {
 				if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, name, w.index, w.collector, w.auditor, w.rateLimiter, w.framer); err != nil {
 					result["status"] = "partial"
 					result["error"] = fmt.Sprintf("failed to reload %s: %v", name, err)
+					w.auditor.ControlAction(ctx, "reload", name, "error", err.Error())
 				} else {
 					reloaded = append(reloaded, name)
+					w.auditor.ControlAction(ctx, "reload", name, "success", "")
 				}
 			}
 			result["reloaded"] = reloaded
@@ -168,9 +170,11 @@ func (w *ControlWatcher) processCommand(filename string) {
 			if err := ReloadPlugin(ctx, w.srv, w.mgr, w.cfg, pluginName, w.index, w.collector, w.auditor, w.rateLimiter, w.framer); err != nil {
 				result["status"] = "error"
 				result["error"] = err.Error()
+				w.auditor.ControlAction(ctx, "reload", pluginName, "error", err.Error())
 			} else {
 				result["status"] = "success"
 				result["plugin"] = pluginName
+				w.auditor.ControlAction(ctx, "reload", pluginName, "success", "")
 			}
 		}
 

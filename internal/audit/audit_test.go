@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -343,4 +346,62 @@ func TestScrubberArrayStringValues(t *testing.T) {
 			t.Errorf("nested JWT not redacted: %s", obj["tokens"][0])
 		}
 	})
+}
+
+func TestControlAction_DisabledLogger(_ *testing.T) {
+	logger := &Logger{}
+	logger.ControlAction(context.Background(), "reload", "test-plugin", "success", "")
+}
+
+func TestControlAction_SuccessAndError(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "audit.log")
+	cfg := Config{LogFile: logFile}
+	logger, err := New(cfg)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+
+	ctx := WithCorrelationID(context.Background())
+	logger.ControlAction(ctx, "reload", "jira", "success", "")
+	logger.ControlAction(ctx, "reload", "github", "error", "plugin not found")
+	_ = logger.Close()
+
+	data, err := os.ReadFile(logFile) //nolint:gosec // test file
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 log lines, got %d", len(lines))
+	}
+
+	var entry map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &entry); err != nil {
+		t.Fatalf("parse log line: %v", err)
+	}
+	if entry["event"] != "control_action" {
+		t.Errorf("expected event=control_action, got %v", entry["event"])
+	}
+	if entry["plugin"] != "jira" {
+		t.Errorf("expected plugin=jira, got %v", entry["plugin"])
+	}
+	if entry["status"] != "success" {
+		t.Errorf("expected status=success, got %v", entry["status"])
+	}
+	if entry["action"] != "reload" {
+		t.Errorf("expected action=reload, got %v", entry["action"])
+	}
+}
+
+func TestControlAction_ScrubsErrorMessages(t *testing.T) {
+	cfg := Config{Stdout: true}
+	logger, err := New(cfg)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer func() { _ = logger.Close() }()
+
+	ctx := WithCorrelationID(context.Background())
+	jwt := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+	logger.ControlAction(ctx, "reload", "test", "error", "auth failed: "+jwt)
 }

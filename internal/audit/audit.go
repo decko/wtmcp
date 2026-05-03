@@ -150,6 +150,27 @@ func (l *Logger) HTTPRequest(ctx context.Context, plugin, method, host, path str
 	l.log(ctx, attrs)
 }
 
+// ControlAction logs a control-plane action (e.g., plugin reload).
+func (l *Logger) ControlAction(ctx context.Context, action, pluginName, status, errMsg string) {
+	if !l.configured {
+		return
+	}
+
+	attrs := []slog.Attr{
+		slog.String("event", "control_action"),
+		slog.String("correlation_id", CorrelationID(ctx)),
+		slog.String("action", action),
+		slog.String("plugin", pluginName),
+		slog.String("status", status),
+	}
+
+	if errMsg != "" {
+		attrs = append(attrs, slog.String("error", truncate(l.scrubber.ScrubString(errMsg), l.maxErrLen)))
+	}
+
+	l.log(ctx, attrs)
+}
+
 // Close flushes and closes the audit log file (if any).
 func (l *Logger) Close() error {
 	if l.file != nil {
