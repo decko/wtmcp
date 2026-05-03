@@ -134,10 +134,10 @@ func (s SecurityConfig) ElicitationEnabled() bool {
 
 // ElicitationStrictEnabled returns whether write tools should be
 // blocked when the MCP client does not support elicitation
-// (default: false -- allow execution with a warning).
+// (default: true -- block execution).
 func (s SecurityConfig) ElicitationStrictEnabled() bool {
 	if s.ElicitationStrict == nil {
-		return false
+		return true
 	}
 	return *s.ElicitationStrict
 }

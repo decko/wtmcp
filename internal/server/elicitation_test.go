@@ -205,13 +205,48 @@ func TestElicitation_WriteClientUnsupported(t *testing.T) {
 	resp := callTool(ctx, srv, "test_write")
 	text, isErr := extractToolText(resp)
 
-	// Should fall through to execution — tool fails with handler
-	// error (not an elicitation error).
+	// Default strict mode blocks write tools when client lacks
+	// elicitation support.
+	if !isErr {
+		t.Error("strict mode (default) should block write tools when client lacks elicitation")
+	}
+	if !strings.Contains(text, "write tools require elicitation support") {
+		t.Errorf("expected strict-mode message, got: %s", text)
+	}
+}
+
+func TestElicitation_WriteClientUnsupported_NonStrict(t *testing.T) {
+	mgr := plugin.NewManagerForTest()
+	mgr.SetManifest("test-plugin", &plugin.Manifest{
+		Name:      "test-plugin",
+		Execution: "oneshot",
+		Tools:     defaultTools,
+	})
+	mgr.SetHandle("test-plugin")
+
+	cfg := config.DefaultConfig()
+	elicitation := true
+	strict := false
+	cfg.Security.Elicitation = &elicitation
+	cfg.Security.ElicitationStrict = &strict
+
+	rl, _ := ratelimit.New("1000/m", nil, "10000/m")
+	index := NewToolIndex(mgr, false)
+	srv := New("test", mgr, cfg, index, nil, nil, rl, nil)
+
+	session := &mockPlainSession{}
+	ctx := srv.WithContext(context.Background(), session)
+
+	resp := callTool(ctx, srv, "test_write")
+	text, isErr := extractToolText(resp)
+
+	// Non-strict: falls through to execution — tool fails with
+	// handler error (not an elicitation error).
 	if !isErr {
 		t.Error("expected error from tool execution (no handler), got success")
 	}
-	if strings.Contains(text, "declined by user") || strings.Contains(text, "confirmation failed") {
-		t.Errorf("unsupported client should fall through, got: %s", text)
+	if strings.Contains(text, "declined by user") || strings.Contains(text, "elicitation support") {
+		t.Errorf("non-strict should fall through, got: %s", text)
 	}
 }
 
