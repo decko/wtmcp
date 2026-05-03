@@ -1,6 +1,5 @@
 # Binaries
-/wtmcp
-/wtmcpctl
+/bin/
 plugins/*/handler
 
 # Test/coverage
@@ -24,6 +23,7 @@ uv.lock
 
 # Plugin runtime artifacts
 control/
+wtmcp/
 
 # Environment
 .env

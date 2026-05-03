@@ -5,28 +5,32 @@ GO_TOOLCHAIN_VERSION := 1.25.0
 
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo "dev")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+BINDIR := bin
 LDFLAGS := -s -w -X main.Version=$(VERSION) -X main.BuildDate=$(BUILD_DATE)
 
 # Default target
 all: build
 
 # Build everything
-build: wtmcp wtmcpctl plugins
+build: $(BINDIR)/wtmcp $(BINDIR)/wtmcpctl plugins
 
 # Build wtmcp binary
-wtmcp: $(shell find cmd/wtmcp -name '*.go') $(shell find internal -name '*.go')
+$(BINDIR)/wtmcp: $(shell find cmd/wtmcp -name '*.go') $(shell find internal -name '*.go')
 	@echo "Building wtmcp..."
-	go build -ldflags "$(LDFLAGS)" -o wtmcp ./cmd/wtmcp
+	@mkdir -p $(BINDIR)
+	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/wtmcp ./cmd/wtmcp
 
 # Build wtmcpctl binary
-wtmcpctl: $(shell find cmd/wtmcpctl -name '*.go') $(shell find internal -name '*.go')
+$(BINDIR)/wtmcpctl: $(shell find cmd/wtmcpctl -name '*.go') $(shell find internal -name '*.go')
 	@echo "Building wtmcpctl..."
-	go build -ldflags "$(LDFLAGS)" -o wtmcpctl ./cmd/wtmcpctl
+	@mkdir -p $(BINDIR)
+	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/wtmcpctl ./cmd/wtmcpctl
 
 # Build with sandbox support (requires libarapuca via pkg-config)
-build-sandbox: wtmcpctl plugins
+build-sandbox: $(BINDIR)/wtmcpctl plugins
 	@echo "Building wtmcp (sandbox)..."
-	go build -tags sandbox -ldflags "$(LDFLAGS)" -o wtmcp ./cmd/wtmcp
+	@mkdir -p $(BINDIR)
+	go build -tags sandbox -ldflags "$(LDFLAGS)" -o $(BINDIR)/wtmcp ./cmd/wtmcp
 
 # Build all plugins that have a Makefile
 plugins:
@@ -84,7 +88,7 @@ pre-commit:
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	rm -f wtmcp wtmcpctl coverage.out
+	rm -rf $(BINDIR) coverage.out
 	rm -f plugins/*/handler
 	@for dir in plugins/*/; do \
 		if [ -f "$${dir}Makefile" ]; then \
@@ -100,8 +104,8 @@ help:
 	@echo "  all            - Build everything (default)"
 	@echo "  build          - Build all binaries and plugins"
 	@echo "  build-sandbox  - Build with sandbox support (requires libarapuca)"
-	@echo "  wtmcp          - Build wtmcp binary"
-	@echo "  wtmcpctl       - Build wtmcpctl binary"
+	@echo "  bin/wtmcp      - Build wtmcp binary"
+	@echo "  bin/wtmcpctl   - Build wtmcpctl binary"
 	@echo "  plugins        - Build all plugins with Makefiles"
 	@echo "  test           - Run tests"
 	@echo "  test-sandbox   - Run tests with sandbox tag (requires libarapuca)"
