@@ -409,6 +409,13 @@ func printVaultStatus(result *plugin.DiscoveryResult) {
 		passwordSource = fmt.Sprintf("file (%s)", cfg.Secrets.VaultPasswordFile)
 	case len(cfg.Secrets.VaultIDs) > 0:
 		passwordSource = "vault IDs" //nolint:gosec // status label, not a credential
+	default:
+		if result.VaultResolver != nil {
+			if pw, err := result.VaultResolver(""); err == nil {
+				vault.ZeroBytes(pw)
+				passwordSource = "env var" //nolint:gosec // status label, not a credential
+			}
+		}
 	}
 	fmt.Printf("vault password: %s\n", passwordSource)
 
@@ -425,12 +432,10 @@ func printVaultStatus(result *plugin.DiscoveryResult) {
 		return
 	}
 
-	// Fresh resolver for test-decryption. Note: env-var-based
-	// passwords (WTMCP_VAULT_PASSWORD) were consumed and unset
-	// by Discover()'s resolver, and this new closure has its own
-	// empty cache, so env-var-only configurations will show
-	// "no password" here. See staging/issues/ for the fix.
-	resolve := config.ResolveVaultPassword(cfg)
+	resolve := result.VaultResolver
+	if resolve == nil {
+		return
+	}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".env") {
 			continue

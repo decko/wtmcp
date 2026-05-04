@@ -17,14 +17,15 @@ type DiscoveryOptions struct {
 
 // DiscoveryResult contains the results of plugin discovery.
 type DiscoveryResult struct {
-	Workdir     string
-	ConfigPath  string // Resolved config file path (for write-back)
-	Config      *config.Config
-	EnvDir      string // Resolved env.d directory path
-	EnvGroups   map[string]map[string]string
-	EnvErrors   map[string]string
-	EnvDirError string // env.d directory-level error, if any
-	Manager     *Manager
+	Workdir       string
+	ConfigPath    string // Resolved config file path (for write-back)
+	Config        *config.Config
+	EnvDir        string // Resolved env.d directory path
+	EnvGroups     map[string]map[string]string
+	EnvErrors     map[string]string
+	EnvDirError   string // env.d directory-level error, if any
+	Manager       *Manager
+	VaultResolver func(vaultID string) ([]byte, error)
 }
 
 // Discover performs plugin discovery without loading plugins.
@@ -51,8 +52,9 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 
 	// Load scoped env.d groups (not into process env)
 	envDir := config.ResolveEnvDir(cfg, workdir)
+	resolve := config.ResolveVaultPassword(cfg)
 	envOpts := config.EnvLoadOptions{
-		VaultPassword: config.ResolveVaultPassword(cfg),
+		VaultPassword: resolve,
 	}
 	envResult, err := config.LoadEnvGroups(envDir, envOpts)
 	if err != nil {
@@ -87,13 +89,14 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 	}
 
 	return &DiscoveryResult{
-		Workdir:     workdir,
-		ConfigPath:  cfgPath,
-		Config:      cfg,
-		EnvDir:      envDir,
-		EnvGroups:   envResult.Groups,
-		EnvErrors:   envResult.Errors,
-		EnvDirError: envResult.DirError,
-		Manager:     mgr,
+		Workdir:       workdir,
+		ConfigPath:    cfgPath,
+		Config:        cfg,
+		EnvDir:        envDir,
+		EnvGroups:     envResult.Groups,
+		EnvErrors:     envResult.Errors,
+		EnvDirError:   envResult.DirError,
+		Manager:       mgr,
+		VaultResolver: resolve,
 	}, nil
 }
