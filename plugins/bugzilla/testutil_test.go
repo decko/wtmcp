@@ -87,7 +87,7 @@ func (b *mockBridge) expectHTTP(status int, body any) handler.Message {
 	return req
 }
 
-func (b *mockBridge) expectCacheGet(hit bool, val any) handler.Message {
+func (b *mockBridge) expectCacheGet(hit bool, val any) {
 	b.t.Helper()
 	if !b.in.Scan() {
 		b.t.Fatal("bridge: expected cache_get request, got EOF")
@@ -114,10 +114,9 @@ func (b *mockBridge) expectCacheGet(hit bool, val any) handler.Message {
 		b.t.Fatalf("bridge: marshal response: %v", err)
 	}
 	_, _ = fmt.Fprintf(b.out, "%s\n", data)
-	return req
 }
 
-func (b *mockBridge) expectCacheSet() handler.Message {
+func (b *mockBridge) expectCacheSet() {
 	b.t.Helper()
 	if !b.in.Scan() {
 		b.t.Fatal("bridge: expected cache_set request, got EOF")
@@ -138,7 +137,6 @@ func (b *mockBridge) expectCacheSet() handler.Message {
 		b.t.Fatalf("bridge: marshal response: %v", err)
 	}
 	_, _ = fmt.Fprintf(b.out, "%s\n", data)
-	return req
 }
 
 func (b *mockBridge) expectCacheFlush(count int) handler.Message {

@@ -626,6 +626,356 @@ func TestGetHistoryInvalidBugID(t *testing.T) {
 	}
 }
 
+// --- bugzilla_get_attachments tests ---
+
+func TestGetAttachments(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolGetAttachments, map[string]any{"bug_id": "100"})
+
+	bridge.expectHTTP(200, map[string]any{
+		"bugs": map[string]any{
+			"100": []map[string]any{
+				{"id": float64(1), "file_name": "patch.diff", "content_type": "text/plain",
+					"size": float64(1024), "creator": "dev@example.com",
+					"creation_time": "2026-01-01T00:00:00Z", "is_obsolete": float64(0),
+					"summary": "Fix for crash", "data": "should_be_excluded"},
+			},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["count"] != float64(1) {
+		t.Errorf("count = %v, want 1", result["count"])
+	}
+
+	atts := result["attachments"].([]any)
+	att := atts[0].(map[string]any)
+	if att["file_name"] != "patch.diff" {
+		t.Errorf("file_name = %v", att["file_name"])
+	}
+	if _, hasData := att["data"]; hasData {
+		t.Error("shaped attachment should not include data field")
+	}
+}
+
+func TestGetAttachmentsExcludeFieldsSent(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolGetAttachments, map[string]any{"bug_id": "100"})
+
+	req := bridge.expectHTTP(200, map[string]any{
+		"bugs": map[string]any{"100": []any{}},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	if req.Query["exclude_fields"] != "data" {
+		t.Errorf("exclude_fields = %v, want 'data'", req.Query["exclude_fields"])
+	}
+}
+
+// --- bugzilla_whoami tests ---
+
+func TestWhoami(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolWhoami, map[string]any{})
+
+	bridge.expectHTTP(200, map[string]any{
+		"id":        float64(42),
+		"name":      "testuser",
+		"real_name": "Test User",
+		"email":     "test@example.com",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["name"] != "testuser" {
+		t.Errorf("name = %v", result["name"])
+	}
+	if result["email"] != "test@example.com" {
+		t.Errorf("email = %v", result["email"])
+	}
+}
+
+func TestWhoami404(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolWhoami, map[string]any{})
+
+	bridge.expectHTTP(404, map[string]any{
+		"error": true, "message": "endpoint not found", "code": 0,
+	})
+
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for 404")
+	}
+}
+
+// --- bugzilla_get_user tests ---
+
+func TestGetUserByName(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolGetUser, map[string]any{"user": "jdoe"})
+
+	req := bridge.expectHTTP(200, map[string]any{
+		"users": []map[string]any{
+			{"id": float64(1), "name": "jdoe", "real_name": "John Doe",
+				"email": "jdoe@example.com", "can_login": true,
+				"groups": []map[string]any{{"name": "admin"}}},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	if req.Query["match"] != "jdoe" {
+		t.Errorf("expected match param, got query = %v", req.Query)
+	}
+
+	result := toMap(t, r.val)
+	users := result["users"].([]any)
+	user := users[0].(map[string]any)
+	if user["name"] != "jdoe" {
+		t.Errorf("name = %v", user["name"])
+	}
+	if _, hasGroups := user["groups"]; hasGroups {
+		t.Error("groups should be stripped from response")
+	}
+}
+
+func TestGetUserByEmail(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolGetUser, map[string]any{"user": "jdoe@example.com"})
+
+	req := bridge.expectHTTP(200, map[string]any{
+		"users": []map[string]any{
+			{"id": float64(1), "name": "jdoe", "real_name": "John Doe",
+				"email": "jdoe@example.com", "can_login": true},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	if req.Query["names"] != "jdoe@example.com" {
+		t.Errorf("expected names param, got query = %v", req.Query)
+	}
+}
+
+func TestGetUserByID(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolGetUser, map[string]any{"user": "42"})
+
+	req := bridge.expectHTTP(200, map[string]any{
+		"users": []map[string]any{
+			{"id": float64(42), "name": "user42", "real_name": "User 42",
+				"email": "user42@example.com", "can_login": true},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	if req.Query["ids"] != "42" {
+		t.Errorf("expected ids param, got query = %v", req.Query)
+	}
+}
+
+func TestGetUserEmpty(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolGetUser, map[string]any{"user": ""})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for empty user")
+	}
+}
+
+// --- bugzilla_get_products tests ---
+
+func TestGetProductsBrief(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolGetProducts, map[string]any{})
+
+	// cache miss
+	bridge.expectCacheGet(false, nil)
+	// product_accessible
+	bridge.expectHTTP(200, map[string]any{
+		"ids": []float64{1, 2},
+	})
+	// product details batch
+	bridge.expectHTTP(200, map[string]any{
+		"products": []map[string]any{
+			{"id": float64(1), "name": "RHEL",
+				"components": []map[string]any{{"name": "kernel"}, {"name": "glibc"}},
+				"versions":   []map[string]any{{"name": "9.0"}, {"name": "10.0"}}},
+			{"id": float64(2), "name": "Fedora",
+				"components": []map[string]any{{"name": "dnf"}},
+				"versions":   []map[string]any{{"name": "40"}}},
+		},
+	})
+	// cache set
+	bridge.expectCacheSet()
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["count"] != float64(2) {
+		t.Errorf("count = %v, want 2", result["count"])
+	}
+
+	prods := result["products"].([]any)
+	prod := prods[0].(map[string]any)
+	if prod["name"] != "RHEL" {
+		t.Errorf("name = %v", prod["name"])
+	}
+	if _, hasComponents := prod["components"]; hasComponents {
+		t.Error("brief mode should not include components")
+	}
+}
+
+func TestGetProductsNameFilter(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolGetProducts, map[string]any{"name_filter": "rhel"})
+
+	bridge.expectCacheGet(false, nil)
+	bridge.expectHTTP(200, map[string]any{"ids": []float64{1, 2}})
+	bridge.expectHTTP(200, map[string]any{
+		"products": []map[string]any{
+			{"id": float64(1), "name": "RHEL"},
+			{"id": float64(2), "name": "Fedora"},
+		},
+	})
+	bridge.expectCacheSet()
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["count"] != float64(1) {
+		t.Errorf("count = %v, want 1 (filtered to RHEL)", result["count"])
+	}
+}
+
+func TestGetProductsCacheHit(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolGetProducts, map[string]any{})
+
+	cachedProducts := []map[string]any{
+		{"id": float64(1), "name": "CachedProduct"},
+	}
+	bridge.expectCacheGet(true, cachedProducts)
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["cached"] != true {
+		t.Error("expected cached=true")
+	}
+	if result["count"] != float64(1) {
+		t.Errorf("count = %v, want 1", result["count"])
+	}
+}
+
+// --- bugzilla_get_fields tests ---
+
+func TestGetFields(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolGetFields, map[string]any{"field_name": "bug_status"})
+
+	bridge.expectCacheGet(false, nil)
+	bridge.expectHTTP(200, map[string]any{
+		"fields": []map[string]any{
+			{"values": []map[string]any{
+				{"name": "NEW"}, {"name": "ASSIGNED"}, {"name": "CLOSED"},
+			}},
+		},
+	})
+	bridge.expectCacheSet()
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["field"] != "bug_status" {
+		t.Errorf("field = %v", result["field"])
+	}
+	values := result["values"].([]any)
+	if len(values) != 3 {
+		t.Errorf("values count = %d, want 3", len(values))
+	}
+}
+
+func TestGetFieldsCacheHit(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolGetFields, map[string]any{"field_name": "priority"})
+
+	bridge.expectCacheGet(true, []string{"low", "medium", "high"})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["cached"] != true {
+		t.Error("expected cached=true")
+	}
+}
+
+func TestGetFieldsEmpty(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolGetFields, map[string]any{"field_name": ""})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for empty field_name")
+	}
+}
+
+func TestGetFieldsPathTraversal(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolGetFields, map[string]any{"field_name": "../../whoami"})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for path traversal in field_name")
+	}
+}
+
+func TestGetFieldsBackslash(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolGetFields, map[string]any{"field_name": "status\\..\\admin"})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for backslash in field_name")
+	}
+}
+
 // --- helpers ---
 
 func toMap(t *testing.T, v any) map[string]any {
