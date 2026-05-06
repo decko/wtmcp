@@ -270,6 +270,10 @@ func base64Decode(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
+func base64Encode(data string) string {
+	return base64.StdEncoding.EncodeToString([]byte(data))
+}
+
 func parseIntIDs(strs []string) ([]int, error) {
 	result := make([]int, 0, len(strs))
 	for _, s := range strs {

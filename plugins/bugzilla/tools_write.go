@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/LeGambiArt/wtmcp/pkg/handler"
@@ -305,16 +307,231 @@ func toolAddComment(params, _ json.RawMessage) (any, error) {
 	return result, nil
 }
 
-// --- stubs for tools implemented in commit 6 ---
+// --- bugzilla_add_attachment ---
 
-func toolAddAttachment(_ /* params */, _ /* config */ json.RawMessage) (any, error) {
-	return nil, &handler.Error{Code: "not_implemented", Message: "bugzilla_add_attachment not yet implemented"}
+type addAttachmentParams struct {
+	BugID       any    `json:"bug_id"`
+	FilePath    string `json:"file_path"`
+	Summary     string `json:"summary"`
+	ContentType string `json:"content_type"`
+	IsPrivate   bool   `json:"is_private"`
+	DryRun      *bool  `json:"dry_run"`
 }
 
-func toolUpdateAttachment(_ /* params */, _ /* config */ json.RawMessage) (any, error) {
-	return nil, &handler.Error{Code: "not_implemented", Message: "bugzilla_update_attachment not yet implemented"}
+func toolAddAttachment(params, _ json.RawMessage) (any, error) {
+	var p addAttachmentParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("parse params: %w", err)
+	}
+
+	bugID, err := parseBugID(p.BugID)
+	if err != nil {
+		return nil, &handler.Error{Code: "validation_error", Message: err.Error()}
+	}
+
+	p.FilePath = strings.TrimSpace(p.FilePath)
+	if p.FilePath == "" {
+		return nil, &handler.Error{Code: "validation_error", Message: "file_path is required"}
+	}
+
+	p.Summary = strings.TrimSpace(p.Summary)
+	if p.Summary == "" {
+		return nil, &handler.Error{Code: "validation_error", Message: "summary is required"}
+	}
+
+	if cfg.outputDir == "" && cfg.sessionDir == "" {
+		return nil, &handler.Error{Code: "no_output_dir", Message: "no output or session directory configured"}
+	}
+
+	resolved, err := confineRead(p.FilePath, cfg.outputDir, cfg.sessionDir)
+	if err != nil {
+		return nil, &handler.Error{Code: "validation_error", Message: "file_path: " + err.Error()}
+	}
+
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("stat file: %w", err)
+	}
+	if info.Size() > int64(maxAttachBytes) {
+		return nil, &handler.Error{
+			Code:    "too_large",
+			Message: fmt.Sprintf("file exceeds %dMB limit (%d bytes)", maxAttachMB, info.Size()),
+		}
+	}
+
+	if p.ContentType == "" {
+		p.ContentType = "application/octet-stream"
+	}
+
+	body := map[string]any{
+		"ids":          []int{bugID},
+		"file_name":    filepath.Base(resolved),
+		"summary":      p.Summary,
+		"content_type": p.ContentType,
+		"is_private":   p.IsPrivate,
+	}
+
+	path := fmt.Sprintf("/rest/bug/%d/attachment", bugID)
+
+	if isDryRun(p.DryRun) {
+		preview := dryRunPreview("POST", path, body)
+		preview["file_path"] = resolved
+		preview["file_size"] = info.Size()
+		return preview, nil
+	}
+
+	fileData, err := os.ReadFile(resolved) //nolint:gosec // path validated by confineRead
+	if err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+	if len(fileData) > maxAttachBytes {
+		return nil, &handler.Error{
+			Code:    "too_large",
+			Message: fmt.Sprintf("file exceeds %dMB limit (%d bytes)", maxAttachMB, len(fileData)),
+		}
+	}
+
+	body["data"] = base64Encode(string(fileData))
+
+	resp, err := plug.HTTP("POST", path, handler.WithBody(body))
+	if err != nil {
+		return nil, fmt.Errorf("add attachment: %w", err)
+	}
+	if resp.Status >= 400 {
+		return nil, parseAPIError(resp)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	return result, nil
 }
 
-func toolMarkDuplicate(_ /* params */, _ /* config */ json.RawMessage) (any, error) {
-	return nil, &handler.Error{Code: "not_implemented", Message: "bugzilla_mark_duplicate not yet implemented"}
+// --- bugzilla_update_attachment ---
+
+type updateAttachmentParams struct {
+	AttachmentID any    `json:"attachment_id"`
+	Description  string `json:"description"`
+	ContentType  string `json:"content_type"`
+	IsObsolete   *bool  `json:"is_obsolete"`
+	IsPrivate    *bool  `json:"is_private"`
+	DryRun       *bool  `json:"dry_run"`
+}
+
+func toolUpdateAttachment(params, _ json.RawMessage) (any, error) {
+	var p updateAttachmentParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("parse params: %w", err)
+	}
+
+	attID, err := parseBugID(p.AttachmentID)
+	if err != nil {
+		return nil, &handler.Error{Code: "validation_error", Message: err.Error()}
+	}
+
+	body := map[string]any{}
+
+	if p.Description != "" {
+		body["summary"] = p.Description
+	}
+	if p.ContentType != "" {
+		body["content_type"] = p.ContentType
+	}
+	if p.IsObsolete != nil {
+		body["is_obsolete"] = *p.IsObsolete
+	}
+	if p.IsPrivate != nil {
+		body["is_private"] = *p.IsPrivate
+	}
+
+	if len(body) == 0 {
+		return nil, &handler.Error{
+			Code:    "validation_error",
+			Message: "at least one field must be specified",
+		}
+	}
+
+	path := fmt.Sprintf("/rest/bug/attachment/%d", attID)
+
+	if isDryRun(p.DryRun) {
+		return dryRunPreview("PUT", path, body), nil
+	}
+
+	resp, err := plug.HTTP("PUT", path, handler.WithBody(body))
+	if err != nil {
+		return nil, fmt.Errorf("update attachment: %w", err)
+	}
+	if resp.Status >= 400 {
+		return nil, parseAPIError(resp)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	return result, nil
+}
+
+// --- bugzilla_mark_duplicate ---
+
+type markDuplicateParams struct {
+	BugID       any    `json:"bug_id"`
+	DuplicateOf any    `json:"duplicate_of"`
+	Comment     string `json:"comment"`
+	DryRun      *bool  `json:"dry_run"`
+}
+
+func toolMarkDuplicate(params, _ json.RawMessage) (any, error) {
+	var p markDuplicateParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("parse params: %w", err)
+	}
+
+	bugID, err := parseBugID(p.BugID)
+	if err != nil {
+		return nil, &handler.Error{Code: "validation_error", Message: "bug_id: " + err.Error()}
+	}
+
+	dupeOf, err := parseBugID(p.DuplicateOf)
+	if err != nil {
+		return nil, &handler.Error{Code: "validation_error", Message: "duplicate_of: " + err.Error()}
+	}
+
+	if bugID == dupeOf {
+		return nil, &handler.Error{
+			Code:    "validation_error",
+			Message: "bug cannot be a duplicate of itself",
+		}
+	}
+
+	body := map[string]any{
+		"status":     "CLOSED",
+		"resolution": "DUPLICATE",
+		"dupe_of":    dupeOf,
+	}
+
+	if p.Comment != "" {
+		body["comment"] = map[string]any{"body": p.Comment}
+	}
+
+	path := fmt.Sprintf("/rest/bug/%d", bugID)
+
+	if isDryRun(p.DryRun) {
+		return dryRunPreview("PUT", path, body), nil
+	}
+
+	resp, err := plug.HTTP("PUT", path, handler.WithBody(body))
+	if err != nil {
+		return nil, fmt.Errorf("mark duplicate: %w", err)
+	}
+	if resp.Status >= 400 {
+		return nil, parseAPIError(resp)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	return result, nil
 }

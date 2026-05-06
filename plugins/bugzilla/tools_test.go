@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -1735,6 +1734,340 @@ func TestAddCommentIntBugID(t *testing.T) {
 
 // --- helpers ---
 
-func base64Encode(s string) string {
-	return base64.StdEncoding.EncodeToString([]byte(s))
+// --- bugzilla_add_attachment tests ---
+
+func TestAddAttachmentDryRun(t *testing.T) {
+	_ = setupToolTest(t)
+
+	testFile := filepath.Join(cfg.outputDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ch := callTool(toolAddAttachment, map[string]any{
+		"bug_id":    "123",
+		"file_path": testFile,
+		"summary":   "test attachment",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["dry_run"] != true {
+		t.Error("default should be dry_run=true")
+	}
+	if result["method"] != "POST" {
+		t.Errorf("method = %v", result["method"])
+	}
+	body := result["body"].(map[string]any)
+	if body["summary"] != "test attachment" {
+		t.Errorf("summary = %v", body["summary"])
+	}
+	if body["content_type"] != "application/octet-stream" {
+		t.Errorf("content_type = %v (should default)", body["content_type"])
+	}
+}
+
+func TestAddAttachmentExecute(t *testing.T) {
+	bridge := setupToolTest(t)
+
+	testFile := filepath.Join(cfg.outputDir, "upload.txt")
+	if err := os.WriteFile(testFile, []byte("file content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dryRunFalse := false
+	ch := callTool(toolAddAttachment, addAttachmentParams{
+		BugID:    "123",
+		FilePath: testFile,
+		Summary:  "upload test",
+		DryRun:   &dryRunFalse,
+	})
+
+	req := bridge.expectHTTP(201, map[string]any{"ids": []float64{42}})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	if req.Method != "POST" {
+		t.Errorf("method = %s, want POST", req.Method)
+	}
+
+	var reqBody map[string]any
+	if err := json.Unmarshal(req.Body, &reqBody); err != nil {
+		t.Fatalf("unmarshal request body: %v", err)
+	}
+	if reqBody["data"] == nil {
+		t.Error("request body should contain base64 data")
+	}
+	if reqBody["summary"] != "upload test" {
+		t.Errorf("summary = %v", reqBody["summary"])
+	}
+}
+
+func TestAddAttachmentPathConfinement(t *testing.T) {
+	_ = setupToolTest(t)
+
+	ch := callTool(toolAddAttachment, map[string]any{
+		"bug_id":    "123",
+		"file_path": "/etc/passwd",
+		"summary":   "evil",
+	})
+
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for path outside allowed dirs")
+	}
+}
+
+func TestAddAttachmentSizeLimit(t *testing.T) {
+	_ = setupToolTest(t)
+
+	bigFile := filepath.Join(cfg.outputDir, "big.bin")
+	data := make([]byte, maxAttachBytes+100)
+	if err := os.WriteFile(bigFile, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ch := callTool(toolAddAttachment, map[string]any{
+		"bug_id":    "123",
+		"file_path": bigFile,
+		"summary":   "too big",
+	})
+
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for oversized file")
+	}
+}
+
+func TestAddAttachmentMissingRequired(t *testing.T) {
+	_ = setupToolTest(t)
+
+	testFile := filepath.Join(cfg.outputDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		params map[string]any
+	}{
+		{"no file_path", map[string]any{"bug_id": "1", "summary": "s"}},
+		{"no summary", map[string]any{"bug_id": "1", "file_path": testFile}},
+		{"no bug_id", map[string]any{"file_path": testFile, "summary": "s"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ch := callTool(toolAddAttachment, tt.params)
+			r := collectResult(t, ch)
+			if r.err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+// --- bugzilla_update_attachment tests ---
+
+func TestUpdateAttachmentDryRun(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateAttachment, map[string]any{
+		"attachment_id": "42",
+		"description":   "updated desc",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["dry_run"] != true {
+		t.Error("default should be dry_run=true")
+	}
+	body := result["body"].(map[string]any)
+	if body["summary"] != "updated desc" {
+		t.Errorf("summary = %v (description maps to BZ summary field)", body["summary"])
+	}
+}
+
+func TestUpdateAttachmentObsolete(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateAttachment, map[string]any{
+		"attachment_id": "42",
+		"is_obsolete":   true,
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+	if body["is_obsolete"] != true {
+		t.Error("is_obsolete should be true")
+	}
+}
+
+func TestUpdateAttachmentExecute(t *testing.T) {
+	bridge := setupToolTest(t)
+	dryRunFalse := false
+	ch := callTool(toolUpdateAttachment, updateAttachmentParams{
+		AttachmentID: "42",
+		Description:  "new desc",
+		DryRun:       &dryRunFalse,
+	})
+
+	bridge.expectHTTP(200, map[string]any{
+		"attachments": []map[string]any{
+			{"id": float64(42), "changes": map[string]any{
+				"summary": map[string]any{"removed": "old", "added": "new desc"},
+			}},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+}
+
+func TestUpdateAttachmentNoFields(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateAttachment, map[string]any{"attachment_id": "42"})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error: at least one field required")
+	}
+}
+
+// --- bugzilla_mark_duplicate tests ---
+
+func TestMarkDuplicateDryRun(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolMarkDuplicate, map[string]any{
+		"bug_id":       "123",
+		"duplicate_of": "456",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["dry_run"] != true {
+		t.Error("default should be dry_run=true")
+	}
+	body := result["body"].(map[string]any)
+	if body["status"] != "CLOSED" {
+		t.Errorf("status = %v", body["status"])
+	}
+	if body["resolution"] != "DUPLICATE" {
+		t.Errorf("resolution = %v", body["resolution"])
+	}
+	if body["dupe_of"] != float64(456) {
+		t.Errorf("dupe_of = %v", body["dupe_of"])
+	}
+}
+
+func TestMarkDuplicateExecute(t *testing.T) {
+	bridge := setupToolTest(t)
+	dryRunFalse := false
+	ch := callTool(toolMarkDuplicate, markDuplicateParams{
+		BugID:       "123",
+		DuplicateOf: "456",
+		DryRun:      &dryRunFalse,
+	})
+
+	req := bridge.expectHTTP(200, map[string]any{
+		"bugs": []map[string]any{
+			{"id": float64(123), "changes": map[string]any{
+				"status":     map[string]any{"removed": "NEW", "added": "CLOSED"},
+				"resolution": map[string]any{"removed": "", "added": "DUPLICATE"},
+			}},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	if req.Method != "PUT" {
+		t.Errorf("method = %s, want PUT", req.Method)
+	}
+}
+
+func TestMarkDuplicateWithComment(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolMarkDuplicate, map[string]any{
+		"bug_id":       "123",
+		"duplicate_of": "456",
+		"comment":      "Same root cause",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+	comment := body["comment"].(map[string]any)
+	if comment["body"] != "Same root cause" {
+		t.Errorf("comment.body = %v", comment["body"])
+	}
+}
+
+func TestMarkDuplicateNoComment(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolMarkDuplicate, map[string]any{
+		"bug_id":       "123",
+		"duplicate_of": "456",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+	if _, hasComment := body["comment"]; hasComment {
+		t.Error("comment should not be in body when not provided (BZ auto-generates)")
+	}
+}
+
+func TestMarkDuplicateSelfReference(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolMarkDuplicate, map[string]any{
+		"bug_id":       "123",
+		"duplicate_of": "123",
+	})
+
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error: cannot duplicate self")
+	}
+}
+
+func TestMarkDuplicateInvalidIDs(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolMarkDuplicate, map[string]any{
+		"bug_id":       "abc",
+		"duplicate_of": "456",
+	})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for invalid bug_id")
+	}
 }
