@@ -436,6 +436,42 @@ func TestConfineRead(t *testing.T) {
 	})
 }
 
+func TestParseIntIDs(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []string
+		want    int
+		wantErr string
+	}{
+		{"valid", []string{"1", "2", "3"}, 3, ""},
+		{"with spaces", []string{" 1 ", " 2 "}, 2, ""},
+		{"skip empty", []string{"1", "", "3"}, 2, ""},
+		{"non-numeric", []string{"abc"}, 0, "must be numeric"},
+		{"negative", []string{"-1"}, 0, "must be positive"},
+		{"zero", []string{"0"}, 0, "must be positive"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseIntIDs(tt.input)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want containing %q", err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != tt.want {
+				t.Errorf("got %d IDs, want %d", len(got), tt.want)
+			}
+		})
+	}
+}
+
 func TestInitConfig(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		raw, _ := json.Marshal(map[string]string{

@@ -1249,6 +1249,492 @@ func toMap(t *testing.T, v any) map[string]any {
 	return m
 }
 
+// --- bugzilla_create_bug tests ---
+
+func TestCreateBugDryRun(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolCreateBug, map[string]any{
+		"product":   "RHEL",
+		"component": "kernel",
+		"summary":   "test bug",
+		"version":   "9.0",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["dry_run"] != true {
+		t.Error("default should be dry_run=true")
+	}
+	if result["method"] != "POST" {
+		t.Errorf("method = %v", result["method"])
+	}
+	body := result["body"].(map[string]any)
+	if body["product"] != "RHEL" {
+		t.Errorf("product = %v", body["product"])
+	}
+	if body["summary"] != "test bug" {
+		t.Errorf("summary = %v", body["summary"])
+	}
+}
+
+func TestCreateBugExecute(t *testing.T) {
+	bridge := setupToolTest(t)
+	dryRunFalse := false
+	ch := callTool(toolCreateBug, createBugParams{
+		Product:   "RHEL",
+		Component: "kernel",
+		Summary:   "real bug",
+		Version:   "9.0",
+		DryRun:    &dryRunFalse,
+	})
+
+	bridge.expectHTTP(200, map[string]any{"id": float64(99999)})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["id"] != float64(99999) {
+		t.Errorf("id = %v, want 99999", result["id"])
+	}
+}
+
+func TestCreateBugMissingRequired(t *testing.T) {
+	_ = setupToolTest(t)
+
+	tests := []struct {
+		name   string
+		params map[string]any
+	}{
+		{"no product", map[string]any{"component": "k", "summary": "s", "version": "1"}},
+		{"no component", map[string]any{"product": "P", "summary": "s", "version": "1"}},
+		{"no summary", map[string]any{"product": "P", "component": "k", "version": "1"}},
+		{"no version", map[string]any{"product": "P", "component": "k", "summary": "s"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ch := callTool(toolCreateBug, tt.params)
+			r := collectResult(t, ch)
+			if r.err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestCreateBugWithOptionalFields(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolCreateBug, map[string]any{
+		"product":     "RHEL",
+		"component":   "kernel",
+		"summary":     "test",
+		"version":     "9.0",
+		"description": "detailed desc",
+		"priority":    "high",
+		"severity":    "urgent",
+		"assigned_to": "dev@example.com",
+		"cc":          []string{"a@b.com", "c@d.com"},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+	if body["description"] != "detailed desc" {
+		t.Errorf("description = %v", body["description"])
+	}
+	if body["priority"] != "high" {
+		t.Errorf("priority = %v", body["priority"])
+	}
+	cc := body["cc"].([]any)
+	if len(cc) != 2 {
+		t.Errorf("cc count = %d, want 2", len(cc))
+	}
+}
+
+// --- bugzilla_update_bug tests ---
+
+func TestUpdateBugDryRun(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id":   "12345",
+		"priority": "high",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["dry_run"] != true {
+		t.Error("default should be dry_run=true")
+	}
+	if result["method"] != "PUT" {
+		t.Errorf("method = %v", result["method"])
+	}
+	body := result["body"].(map[string]any)
+	if body["priority"] != "high" {
+		t.Errorf("priority = %v", body["priority"])
+	}
+}
+
+func TestUpdateBugExecute(t *testing.T) {
+	bridge := setupToolTest(t)
+	dryRunFalse := false
+	ch := callTool(toolUpdateBug, updateBugParams{
+		BugID:    "12345",
+		Priority: "high",
+		DryRun:   &dryRunFalse,
+	})
+
+	bridge.expectHTTP(200, map[string]any{
+		"bugs": []map[string]any{
+			{"id": float64(12345), "changes": map[string]any{
+				"priority": map[string]any{"removed": "low", "added": "high"},
+			}},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+}
+
+func TestUpdateBugClosedRequiresResolution(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id": "123",
+		"status": "CLOSED",
+	})
+
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error: CLOSED requires resolution")
+	}
+}
+
+func TestUpdateBugClosedWithResolution(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id":     "123",
+		"status":     "CLOSED",
+		"resolution": "FIXED",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+	if body["status"] != "CLOSED" {
+		t.Errorf("status = %v", body["status"])
+	}
+	if body["resolution"] != "FIXED" {
+		t.Errorf("resolution = %v", body["resolution"])
+	}
+}
+
+func TestUpdateBugCCNesting(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id":    "123",
+		"cc_add":    []string{"new@example.com"},
+		"cc_remove": []string{"old@example.com"},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+	cc := body["cc"].(map[string]any)
+	add := cc["add"].([]any)
+	remove := cc["remove"].([]any)
+	if add[0] != "new@example.com" {
+		t.Errorf("cc.add = %v", add)
+	}
+	if remove[0] != "old@example.com" {
+		t.Errorf("cc.remove = %v", remove)
+	}
+}
+
+func TestUpdateBugKeywordsNesting(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id":       "123",
+		"keywords_add": []string{"regression"},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+	kw := body["keywords"].(map[string]any)
+	add := kw["add"].([]any)
+	if add[0] != "regression" {
+		t.Errorf("keywords.add = %v", add)
+	}
+}
+
+func TestUpdateBugCommentInBody(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id":  "123",
+		"status":  "ASSIGNED",
+		"comment": "Taking this bug",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+	comment := body["comment"].(map[string]any)
+	if comment["body"] != "Taking this bug" {
+		t.Errorf("comment.body = %v", comment["body"])
+	}
+}
+
+func TestUpdateBugDependsOnNesting(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id":         "123",
+		"depends_on_add": []string{"456", "789"},
+		"blocks_add":     []string{"100"},
+		"blocks_remove":  []string{"200"},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+
+	deps := body["depends_on"].(map[string]any)
+	depsAdd := deps["add"].([]any)
+	if len(depsAdd) != 2 {
+		t.Errorf("depends_on.add count = %d, want 2", len(depsAdd))
+	}
+	if depsAdd[0] != float64(456) {
+		t.Errorf("depends_on.add[0] = %v, want 456 (int)", depsAdd[0])
+	}
+
+	blocks := body["blocks"].(map[string]any)
+	blocksAdd := blocks["add"].([]any)
+	if blocksAdd[0] != float64(100) {
+		t.Errorf("blocks.add[0] = %v, want 100 (int)", blocksAdd[0])
+	}
+	blocksRemove := blocks["remove"].([]any)
+	if blocksRemove[0] != float64(200) {
+		t.Errorf("blocks.remove[0] = %v, want 200 (int)", blocksRemove[0])
+	}
+}
+
+func TestUpdateBugDependsOnInvalid(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id":         "123",
+		"depends_on_add": []string{"abc"},
+	})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for non-numeric depends_on_add")
+	}
+}
+
+func TestUpdateBugWhitespaceResolution(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id":     "123",
+		"status":     "CLOSED",
+		"resolution": "   ",
+	})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error: whitespace resolution should be treated as empty")
+	}
+}
+
+func TestUpdateBugCommentOnly(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id":  "123",
+		"comment": "just a note",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+	if len(body) != 1 {
+		t.Errorf("body should have exactly 1 key (comment), got %d", len(body))
+	}
+	comment := body["comment"].(map[string]any)
+	if comment["body"] != "just a note" {
+		t.Errorf("comment.body = %v", comment["body"])
+	}
+}
+
+func TestUpdateBugNoFields(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{"bug_id": "123"})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error: at least one field required")
+	}
+}
+
+func TestUpdateBugInvalidID(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolUpdateBug, map[string]any{
+		"bug_id":   "abc",
+		"priority": "high",
+	})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for invalid bug_id")
+	}
+}
+
+// --- bugzilla_add_comment tests ---
+
+func TestAddCommentDryRun(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolAddComment, map[string]any{
+		"bug_id":  "456",
+		"comment": "This is a test comment",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["dry_run"] != true {
+		t.Error("default should be dry_run=true")
+	}
+	body := result["body"].(map[string]any)
+	if body["comment"] != "This is a test comment" {
+		t.Errorf("comment = %v", body["comment"])
+	}
+	if body["is_private"] != false {
+		t.Error("is_private should default to false")
+	}
+}
+
+func TestAddCommentExecute(t *testing.T) {
+	bridge := setupToolTest(t)
+	dryRunFalse := false
+	ch := callTool(toolAddComment, addCommentParams{
+		BugID:   "456",
+		Comment: "real comment",
+		DryRun:  &dryRunFalse,
+	})
+
+	bridge.expectHTTP(201, map[string]any{"id": float64(789)})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["id"] != float64(789) {
+		t.Errorf("id = %v, want 789", result["id"])
+	}
+}
+
+func TestAddCommentPrivate(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolAddComment, map[string]any{
+		"bug_id":     "456",
+		"comment":    "secret",
+		"is_private": true,
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	body := result["body"].(map[string]any)
+	if body["is_private"] != true {
+		t.Error("is_private should be true")
+	}
+}
+
+func TestAddCommentEmptyText(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolAddComment, map[string]any{
+		"bug_id":  "456",
+		"comment": "",
+	})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for empty comment")
+	}
+}
+
+func TestAddCommentInvalidBugID(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolAddComment, map[string]any{
+		"bug_id":  "-1",
+		"comment": "test",
+	})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for negative bug_id")
+	}
+}
+
+func TestAddCommentIntBugID(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolAddComment, map[string]any{
+		"bug_id":  789,
+		"comment": "test with int bug_id",
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["path"] != "/rest/bug/789/comment" {
+		t.Errorf("path = %v", result["path"])
+	}
+}
+
+// --- helpers ---
+
 func base64Encode(s string) string {
 	return base64.StdEncoding.EncodeToString([]byte(s))
 }

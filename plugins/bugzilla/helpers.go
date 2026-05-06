@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/LeGambiArt/wtmcp/pkg/handler"
 )
@@ -266,69 +266,43 @@ func confineRead(filePath string, allowedDirs ...string) (string, error) {
 	return "", fmt.Errorf("path escapes allowed directories")
 }
 
+func base64Decode(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
+}
+
+func parseIntIDs(strs []string) ([]int, error) {
+	result := make([]int, 0, len(strs))
+	for _, s := range strs {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		id, err := strconv.Atoi(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid bug ID %q: must be numeric", s)
+		}
+		if id <= 0 {
+			return nil, fmt.Errorf("invalid bug ID %d: must be positive", id)
+		}
+		result = append(result, id)
+	}
+	return result, nil
+}
+
+const maxFilenameLen = 200
+
 func sanitizeFilename(name string, attID int) string {
 	base := filepath.Base(name)
 	if strings.ContainsRune(base, 0) || base == "" || base == "." || base == ".." {
 		base = "attachment"
 	}
-
-	// Strip characters the core's validateFilename rejects:
-	// control chars, DEL, Unicode Cf (invisible), colons.
-	var b strings.Builder
-	for _, r := range base {
-		switch {
-		case r < 0x20 || r == 0x7F:
-			b.WriteRune('_')
-		case unicode.Is(unicode.Cf, r):
-			continue
-		case r == ':':
-			b.WriteRune('_')
-		default:
-			b.WriteRune(r)
-		}
-	}
-	base = b.String()
-
-	// Strip trailing dots and spaces.
-	base = strings.TrimRight(base, ". ")
-
-	// Replace Windows reserved device names.
-	if isReservedName(base) {
-		base = "_" + base
-	}
-
-	if base == "" {
-		base = "attachment"
-	}
-
-	// Truncate accounting for the "attID_" prefix so the combined
-	// result stays within filesystem limits.
-	prefix := fmt.Sprintf("%d_", attID)
-	maxBase := 255 - len(prefix)
-	if len(base) > maxBase {
+	if len(base) > maxFilenameLen {
 		ext := filepath.Ext(base)
-		if len(ext) >= maxBase {
-			base = base[:maxBase]
+		if len(ext) >= maxFilenameLen {
+			base = base[:maxFilenameLen]
 		} else {
-			base = base[:maxBase-len(ext)] + ext
+			base = base[:maxFilenameLen-len(ext)] + ext
 		}
 	}
-	return prefix + base
-}
-
-func isReservedName(name string) bool {
-	upper := strings.ToUpper(name)
-	if dot := strings.IndexByte(upper, '.'); dot >= 0 {
-		upper = upper[:dot]
-	}
-	switch upper {
-	case "CON", "PRN", "AUX", "NUL":
-		return true
-	}
-	if len(upper) == 4 && (strings.HasPrefix(upper, "COM") || strings.HasPrefix(upper, "LPT")) {
-		if upper[3] >= '1' && upper[3] <= '9' {
-			return true
-		}
-	}
-	return false
+	return fmt.Sprintf("%d_%s", attID, base)
 }
