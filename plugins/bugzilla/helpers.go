@@ -204,6 +204,34 @@ func isBrief(v *bool) bool {
 	return v == nil || *v
 }
 
+func confineWrite(filename, baseDir string) (string, error) {
+	if baseDir == "" {
+		return "", fmt.Errorf("no output directory configured")
+	}
+	cleaned := filepath.Join(baseDir, filepath.Clean(filename))
+
+	dir := filepath.Dir(cleaned)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("create directory: %w", err)
+	}
+
+	resolvedBase, err := filepath.EvalSymlinks(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve base dir: %w", err)
+	}
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve target dir: %w", err)
+	}
+	resolved := filepath.Join(resolvedDir, filepath.Base(cleaned))
+
+	if !strings.HasPrefix(resolved, resolvedBase+string(os.PathSeparator)) &&
+		resolved != resolvedBase {
+		return "", fmt.Errorf("path escapes allowed directory")
+	}
+	return resolved, nil
+}
+
 func confineRead(filePath string, allowedDirs ...string) (string, error) {
 	if filePath == "" {
 		return "", fmt.Errorf("file path is required")
