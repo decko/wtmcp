@@ -1,0 +1,475 @@
+name: bugzilla
+version: "0.1.0"
+description: "Bugzilla integration for bug tracking and management"
+
+execution: persistent
+handler: ./handler
+credential_group: bugzilla
+enabled: true
+priority: 50
+
+services:
+  auth:
+    type: bearer
+    token: "${BUGZILLA_API_KEY}"
+  http:
+    base_url: "${BUGZILLA_URL}"
+  cache:
+    enabled: true
+    namespace: bugzilla
+    default_ttl: 300
+
+config:
+  bugzilla_url: "${BUGZILLA_URL}"
+
+context_files:
+  - context.md
+
+env:
+  - BUGZILLA_URL
+
+setup:
+  variants:
+    api-key:
+      label: "API Key authentication"
+      description: "Standard Bugzilla API key (Bearer token)"
+      required: [BUGZILLA_URL, BUGZILLA_API_KEY]
+  credentials:
+    BUGZILLA_URL:
+      description: "Bugzilla instance URL"
+      example: "https://bugzilla.redhat.com"
+      secret: false
+    BUGZILLA_API_KEY:
+      description: "Bugzilla API key"
+      help_url: "https://bugzilla.redhat.com/userprefs.cgi?tab=apikey"
+      instructions: "Log in → Preferences → API Keys → Generate"
+      secret: true
+  validation_tool: bugzilla_whoami
+  post_setup_message: "Restart the MCP server for changes to take effect."
+
+tools:
+  # --- Read tools ---
+
+  - name: bugzilla_search
+    access: read
+    visibility: primary
+    description: >
+      Search Bugzilla bugs using quicksearch syntax or field filters.
+      Returns brief per-bug summaries (id, summary, status, assignee,
+      priority, severity, product, component, url) by default. Set
+      brief=false for full bug data. Results are cached.
+    params:
+      query:
+        type: string
+        description: "Search query (quicksearch syntax)"
+      status:
+        type: string
+        description: "Filter by status (e.g. NEW, ASSIGNED, CLOSED)"
+      product:
+        type: string
+        description: "Filter by product name"
+      component:
+        type: string
+        description: "Filter by component name"
+      assigned_to:
+        type: string
+        description: "Filter by assignee email"
+      include_fields:
+        type: string
+        description: "Comma-separated fields to return (used when brief=false)"
+      max_results:
+        type: integer
+        default: 50
+        description: "Maximum results (capped at 200)"
+      offset:
+        type: integer
+        default: 0
+        description: "Starting offset for pagination"
+      brief:
+        type: boolean
+        default: true
+        description: "Return compact summaries (true) or full data (false)"
+
+  - name: bugzilla_get_bugs
+    access: read
+    visibility: primary
+    description: >
+      Get one or more bugs by ID. Accepts comma-separated bug IDs
+      (max 50). Returns brief summaries by default. Set brief=false
+      for full bug data including description.
+    params:
+      bug_ids:
+        type: string
+        required: true
+        description: "Comma-separated bug IDs (e.g. '12345' or '12345,67890')"
+      include_fields:
+        type: string
+        description: "Comma-separated fields to return (used when brief=false)"
+      brief:
+        type: boolean
+        default: true
+        description: "Return compact summaries (true) or full data (false)"
+
+  - name: bugzilla_get_comments
+    access: read
+    visibility: primary
+    description: >
+      Get comments for a bug. Returns public comments by default.
+      Set include_private=true for private comments (requires
+      Bugzilla insidergroup permissions). Use new_since for
+      efficient filtering on high-volume bugs.
+    params:
+      bug_id:
+        type: string
+        required: true
+        description: "Bug ID"
+      include_private:
+        type: boolean
+        default: false
+        description: "Include private comments (requires permissions)"
+      new_since:
+        type: string
+        description: "Only return comments newer than this date (RFC3339 or YYYY-MM-DD, UTC)"
+      max_results:
+        type: integer
+        default: 100
+        description: "Maximum comments to return (client-side truncation; use new_since for server-side filtering)"
+
+  - name: bugzilla_get_history
+    access: read
+    description: >
+      Get change history for a bug. Returns a list of changes
+      with timestamps, authors, and field modifications.
+    params:
+      bug_id:
+        type: string
+        required: true
+        description: "Bug ID"
+      new_since:
+        type: string
+        description: "Only return changes newer than this date (RFC3339 or YYYY-MM-DD, UTC)"
+
+  - name: bugzilla_get_attachments
+    access: read
+    description: >
+      List attachment metadata for a bug (not content). Returns
+      id, filename, content_type, size, creator, creation_time,
+      is_obsolete, and summary for each attachment.
+    params:
+      bug_id:
+        type: string
+        required: true
+        description: "Bug ID"
+
+  - name: bugzilla_download_attachment
+    access: read
+    description: >
+      Download an attachment by ID and save to the output directory.
+      Returns the local file path. Maximum attachment size: 6MB.
+    params:
+      attachment_id:
+        type: string
+        required: true
+        description: "Attachment ID"
+
+  - name: bugzilla_whoami
+    access: read
+    description: >
+      Get the current authenticated user's identity. Returns id,
+      name, real_name, and email. Zero parameters required.
+    params: {}
+
+  - name: bugzilla_get_user
+    access: read
+    description: >
+      Look up a Bugzilla user by login name, email, or numeric ID.
+      Returns id, name, real_name, email, and can_login.
+    params:
+      user:
+        type: string
+        required: true
+        description: "Login name, email address, or numeric user ID"
+
+  - name: bugzilla_get_products
+    access: read
+    description: >
+      List accessible Bugzilla products. Returns product names and
+      IDs by default. Set include_details=true for components,
+      versions, and milestones. Cached for 1 hour.
+    params:
+      name_filter:
+        type: string
+        description: "Filter products by name substring (case-insensitive)"
+      include_details:
+        type: boolean
+        default: false
+        description: "Include components, versions, and milestones"
+
+  - name: bugzilla_get_fields
+    access: read
+    description: >
+      Get valid values for a bug field. Use before update operations
+      to discover valid statuses, resolutions, priorities, etc.
+      Cached for 1 hour.
+    params:
+      field_name:
+        type: string
+        required: true
+        description: "Field name (e.g. bug_status, resolution, priority, bug_severity, op_sys, rep_platform)"
+
+  - name: bugzilla_flush_cache
+    access: read
+    description: >
+      Flush all cached Bugzilla data (products, fields, search
+      results). Use when cached data appears stale.
+    params: {}
+
+  # --- Write tools (all dry_run=true by default) ---
+
+  - name: bugzilla_create_bug
+    access: write
+    visibility: primary
+    description: >
+      Create a new Bugzilla bug. Defaults to dry_run=true which
+      returns a preview without creating. Set dry_run=false to
+      create. Use bugzilla_get_products to discover valid products,
+      components, and versions.
+    params:
+      product:
+        type: string
+        required: true
+        description: "Product name"
+      component:
+        type: string
+        required: true
+        description: "Component name"
+      summary:
+        type: string
+        required: true
+        description: "Bug summary/title"
+      version:
+        type: string
+        required: true
+        description: "Product version"
+      description:
+        type: string
+        description: "Bug description"
+      priority:
+        type: string
+        description: "Priority (use bugzilla_get_fields to discover valid values)"
+      severity:
+        type: string
+        description: "Severity (use bugzilla_get_fields to discover valid values)"
+      assigned_to:
+        type: string
+        description: "Assignee email address"
+      cc:
+        type: array
+        items:
+          type: string
+        description: "CC email addresses"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without creating (default: true)"
+
+  - name: bugzilla_update_bug
+    access: write
+    visibility: primary
+    description: >
+      Update bug fields. All fields are optional except bug_id.
+      Defaults to dry_run=true. Use bugzilla_get_fields to discover
+      valid values for status, resolution, priority, and severity.
+    params:
+      bug_id:
+        type: string
+        required: true
+        description: "Bug ID to update"
+      status:
+        type: string
+        description: "New status (use bugzilla_get_fields for valid values)"
+      resolution:
+        type: string
+        description: "Resolution (required when status is CLOSED)"
+      assigned_to:
+        type: string
+        description: "New assignee email"
+      priority:
+        type: string
+        description: "New priority"
+      severity:
+        type: string
+        description: "New severity"
+      product:
+        type: string
+        description: "Move to different product"
+      component:
+        type: string
+        description: "Move to different component"
+      version:
+        type: string
+        description: "Set version"
+      target_milestone:
+        type: string
+        description: "Set target milestone"
+      whiteboard:
+        type: string
+        description: "Set status whiteboard"
+      qa_contact:
+        type: string
+        description: "Set QA contact email"
+      comment:
+        type: string
+        description: "Optional comment to add with the update"
+      cc_add:
+        type: array
+        items:
+          type: string
+        description: "Email addresses to add to CC list"
+      cc_remove:
+        type: array
+        items:
+          type: string
+        description: "Email addresses to remove from CC list"
+      keywords_add:
+        type: array
+        items:
+          type: string
+        description: "Keywords to add"
+      keywords_remove:
+        type: array
+        items:
+          type: string
+        description: "Keywords to remove"
+      depends_on_add:
+        type: array
+        items:
+          type: string
+        description: "Bug IDs to add as dependencies"
+      depends_on_remove:
+        type: array
+        items:
+          type: string
+        description: "Bug IDs to remove from dependencies"
+      blocks_add:
+        type: array
+        items:
+          type: string
+        description: "Bug IDs this bug blocks (add)"
+      blocks_remove:
+        type: array
+        items:
+          type: string
+        description: "Bug IDs this bug blocks (remove)"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without updating (default: true)"
+
+  - name: bugzilla_add_comment
+    access: write
+    visibility: primary
+    description: >
+      Add a comment to a bug. Defaults to dry_run=true.
+    params:
+      bug_id:
+        type: string
+        required: true
+        description: "Bug ID"
+      comment:
+        type: string
+        required: true
+        description: "Comment text"
+      is_private:
+        type: boolean
+        default: false
+        description: "Make the comment private (requires insidergroup permissions)"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without posting (default: true)"
+
+  - name: bugzilla_add_attachment
+    access: write
+    description: >
+      Upload a file as an attachment to a bug. Reads from the
+      output or session directory (path-confined). Maximum file
+      size: 6MB. Defaults to dry_run=true.
+    params:
+      bug_id:
+        type: string
+        required: true
+        description: "Bug ID"
+      file_path:
+        type: string
+        required: true
+        description: "Path to the file to attach"
+      summary:
+        type: string
+        required: true
+        description: "Attachment description/summary"
+      content_type:
+        type: string
+        description: "MIME type (default: auto-detect or application/octet-stream)"
+      is_private:
+        type: boolean
+        default: false
+        description: "Make the attachment private"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without uploading (default: true)"
+
+  - name: bugzilla_update_attachment
+    access: write
+    description: >
+      Update attachment metadata. Set is_obsolete=true to mark
+      an attachment as obsolete (soft-delete). Bugzilla does not
+      support permanent attachment deletion via API. Defaults to
+      dry_run=true.
+    params:
+      attachment_id:
+        type: string
+        required: true
+        description: "Attachment ID"
+      description:
+        type: string
+        description: "New description"
+      content_type:
+        type: string
+        description: "New MIME type"
+      is_obsolete:
+        type: boolean
+        description: "Mark as obsolete (soft-delete)"
+      is_private:
+        type: boolean
+        description: "Set private flag"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without updating (default: true)"
+
+  - name: bugzilla_mark_duplicate
+    access: write
+    description: >
+      Mark a bug as a duplicate of another bug and close it.
+      Sets status=CLOSED, resolution=DUPLICATE, and dupe_of.
+      Bugzilla auto-generates a system comment; provide your
+      own comment only if additional context is needed.
+      Defaults to dry_run=true.
+    params:
+      bug_id:
+        type: string
+        required: true
+        description: "Bug ID to mark as duplicate"
+      duplicate_of:
+        type: string
+        required: true
+        description: "Bug ID this is a duplicate of"
+      comment:
+        type: string
+        description: "Optional comment (Bugzilla auto-generates one)"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without updating (default: true)"
