@@ -1,7 +1,11 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -626,6 +630,260 @@ func TestGetHistoryInvalidBugID(t *testing.T) {
 	}
 }
 
+// --- bugzilla_download_attachment tests ---
+
+func TestDownloadAttachment(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "42"})
+
+	bridge.expectHTTP(200, map[string]any{
+		"attachments": map[string]any{
+			"42": map[string]any{
+				"data":         base64Encode("hello world"),
+				"file_name":    "patch.diff",
+				"content_type": "text/plain",
+				"size":         11,
+			},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["attachment_id"] != float64(42) {
+		t.Errorf("attachment_id = %v", result["attachment_id"])
+	}
+	if result["size"] != float64(11) {
+		t.Errorf("size = %v, want 11", result["size"])
+	}
+	if result["file_name"] != "patch.diff" {
+		t.Errorf("file_name = %v", result["file_name"])
+	}
+
+	filePath, _ := result["file_path"].(string)
+	data, err := os.ReadFile(filePath) //nolint:gosec // test reads file we just wrote
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != "hello world" {
+		t.Errorf("file content = %q, want %q", data, "hello world")
+	}
+}
+
+func TestDownloadAttachmentFilenameHasID(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "99"})
+
+	bridge.expectHTTP(200, map[string]any{
+		"attachments": map[string]any{
+			"99": map[string]any{
+				"data":         base64Encode("x"),
+				"file_name":    "report.txt",
+				"content_type": "text/plain",
+				"size":         1,
+			},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	filePath, _ := result["file_path"].(string)
+	base := filepath.Base(filePath)
+	if base != "99_report.txt" {
+		t.Errorf("filename = %q, want %q", base, "99_report.txt")
+	}
+}
+
+func TestDownloadAttachmentPathTraversal(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+	}{
+		{"dot-dot-slash", "../../../etc/passwd"},
+		{"absolute", "/etc/passwd"},
+		{"dot-dot-backslash", "..\\..\\etc\\passwd"},
+		{"double-dot", ".."},
+		{"single-dot", "."},
+		{"empty", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bridge := setupToolTest(t)
+			ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "1"})
+
+			bridge.expectHTTP(200, map[string]any{
+				"attachments": map[string]any{
+					"1": map[string]any{
+						"data":         base64Encode("evil"),
+						"file_name":    tt.filename,
+						"content_type": "application/octet-stream",
+						"size":         4,
+					},
+				},
+			})
+
+			r := collectResult(t, ch)
+			if r.err != nil {
+				t.Fatalf("unexpected error: %v", r.err)
+			}
+
+			result := toMap(t, r.val)
+			filePath, _ := result["file_path"].(string)
+
+			if !strings.HasPrefix(filePath, cfg.outputDir) {
+				t.Errorf("file written outside output dir: %s", filePath)
+			}
+
+			base := filepath.Base(filePath)
+			if !strings.HasPrefix(base, "1_") {
+				t.Errorf("filename should start with attachment ID prefix, got %q", base)
+			}
+		})
+	}
+}
+
+func TestDownloadAttachmentNullByte(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "1"})
+
+	bridge.expectHTTP(200, map[string]any{
+		"attachments": map[string]any{
+			"1": map[string]any{
+				"data":         base64Encode("x"),
+				"file_name":    "file\x00.txt",
+				"content_type": "text/plain",
+				"size":         1,
+			},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("unexpected error: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	filePath, _ := result["file_path"].(string)
+	base := filepath.Base(filePath)
+	if base != "1_attachment" {
+		t.Errorf("null byte filename should be sanitized to '1_attachment', got %q", base)
+	}
+}
+
+func TestDownloadAttachmentSizeLimit(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "1"})
+
+	// Create data that exceeds 6MB when decoded
+	largeData := strings.Repeat("A", maxAttachBytes+100)
+	encoded := base64Encode(largeData)
+
+	bridge.expectHTTP(200, map[string]any{
+		"attachments": map[string]any{
+			"1": map[string]any{
+				"data":         encoded,
+				"file_name":    "huge.bin",
+				"content_type": "application/octet-stream",
+				"size":         len(largeData),
+			},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for oversized attachment")
+	}
+}
+
+func TestDownloadAttachmentExactLimit(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "1"})
+
+	exactData := strings.Repeat("X", maxAttachBytes)
+	bridge.expectHTTP(200, map[string]any{
+		"attachments": map[string]any{
+			"1": map[string]any{
+				"data":         base64Encode(exactData),
+				"file_name":    "exact.bin",
+				"content_type": "application/octet-stream",
+				"size":         maxAttachBytes,
+			},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err != nil {
+		t.Fatalf("exact limit should succeed: %v", r.err)
+	}
+
+	result := toMap(t, r.val)
+	if result["size"] != float64(maxAttachBytes) {
+		t.Errorf("size = %v, want %d", result["size"], maxAttachBytes)
+	}
+}
+
+func TestDownloadAttachmentInvalidBase64(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "1"})
+
+	bridge.expectHTTP(200, map[string]any{
+		"attachments": map[string]any{
+			"1": map[string]any{
+				"data":         "!!!not-valid-base64!!!",
+				"file_name":    "bad.bin",
+				"content_type": "application/octet-stream",
+				"size":         0,
+			},
+		},
+	})
+
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for invalid base64")
+	}
+}
+
+func TestDownloadAttachmentNoOutputDir(t *testing.T) {
+	_ = setupToolTest(t)
+	cfg.outputDir = ""
+	ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "1"})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error when output dir is empty")
+	}
+}
+
+func TestDownloadAttachmentInvalidID(t *testing.T) {
+	_ = setupToolTest(t)
+	ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "abc"})
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for invalid attachment_id")
+	}
+}
+
+func TestDownloadAttachmentNotFound(t *testing.T) {
+	bridge := setupToolTest(t)
+	ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "999"})
+
+	bridge.expectHTTP(200, map[string]any{
+		"attachments": map[string]any{},
+	})
+
+	r := collectResult(t, ch)
+	if r.err == nil {
+		t.Fatal("expected error for missing attachment in response")
+	}
+}
+
 // --- bugzilla_get_attachments tests ---
 
 func TestGetAttachments(t *testing.T) {
@@ -989,4 +1247,8 @@ func toMap(t *testing.T, v any) map[string]any {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	return m
+}
+
+func base64Encode(s string) string {
+	return base64.StdEncoding.EncodeToString([]byte(s))
 }

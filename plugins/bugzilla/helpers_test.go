@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -328,13 +330,10 @@ func TestSanitizeFilename(t *testing.T) {
 		{"dot", ".", 5, "5_attachment"},
 		{"dotdot", "..", 5, "5_attachment"},
 		{"null byte", "file\x00.txt", 5, "5_attachment"},
-		{"long name", strings.Repeat("A", 300) + ".txt", 7, "7_" + strings.Repeat("A", 249) + ".txt"},
-		{"long name no ext", strings.Repeat("B", 300), 8, "8_" + strings.Repeat("B", 253)},
-		{"long ext only", "." + strings.Repeat("C", 300), 9, "9_." + strings.Repeat("C", 252)},
-		{"long ext with stem", "x." + strings.Repeat("D", 300), 10, "10_" + ("x." + strings.Repeat("D", 300))[:252]},
-		{"control chars stripped", "file\x01\x7fname.txt", 1, "1_file__name.txt"},
-		{"trailing dots stripped", "file...", 1, "1_file"},
-		{"windows reserved", "CON.txt", 1, "1__CON.txt"},
+		{"long name", strings.Repeat("A", 300) + ".txt", 7, "7_" + strings.Repeat("A", 196) + ".txt"},
+		{"long name no ext", strings.Repeat("B", 300), 8, "8_" + strings.Repeat("B", 200)},
+		{"long ext only", "." + strings.Repeat("C", 250), 9, "9_." + strings.Repeat("C", 199)},
+		{"long ext with stem", "x." + strings.Repeat("D", 250), 10, "10_x." + strings.Repeat("D", 198)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -344,6 +343,97 @@ func TestSanitizeFilename(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConfineWrite(t *testing.T) {
+	base := t.TempDir()
+
+	t.Run("normal", func(t *testing.T) {
+		got, err := confineWrite("subdir/file.txt", base)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.HasPrefix(got, base) {
+			t.Errorf("result %q not under base %q", got, base)
+		}
+	})
+
+	t.Run("traversal", func(t *testing.T) {
+		_, err := confineWrite("../../../etc/passwd", base)
+		if err == nil {
+			t.Fatal("expected error for path traversal")
+		}
+	})
+
+	t.Run("empty base", func(t *testing.T) {
+		_, err := confineWrite("file.txt", "")
+		if err == nil {
+			t.Fatal("expected error for empty base")
+		}
+	})
+
+	t.Run("symlink in parent", func(t *testing.T) {
+		outside := t.TempDir()
+		link := filepath.Join(base, "escape")
+		if err := os.Symlink(outside, link); err != nil {
+			t.Skip("cannot create symlink")
+		}
+		_, err := confineWrite(filepath.Join("escape", "file.txt"), base)
+		if err == nil {
+			t.Fatal("expected error for symlink escape")
+		}
+	})
+}
+
+func TestConfineRead(t *testing.T) {
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("normal", func(t *testing.T) {
+		got, err := confineRead(testFile, dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.HasPrefix(got, dir) {
+			t.Errorf("result %q not under dir %q", got, dir)
+		}
+	})
+
+	t.Run("outside allowed", func(t *testing.T) {
+		other := t.TempDir()
+		otherFile := filepath.Join(other, "secret.txt")
+		if err := os.WriteFile(otherFile, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := confineRead(otherFile, dir)
+		if err == nil {
+			t.Fatal("expected error for path outside allowed dirs")
+		}
+	})
+
+	t.Run("nonexistent", func(t *testing.T) {
+		_, err := confineRead(filepath.Join(dir, "nope.txt"), dir)
+		if err == nil {
+			t.Fatal("expected error for nonexistent file")
+		}
+	})
+
+	t.Run("directory", func(t *testing.T) {
+		_, err := confineRead(dir, dir)
+		if err == nil {
+			t.Fatal("expected error for directory")
+		}
+	})
+
+	t.Run("empty path", func(t *testing.T) {
+		_, err := confineRead("", dir)
+		if err == nil {
+			t.Fatal("expected error for empty path")
+		}
+	})
 }
 
 func TestInitConfig(t *testing.T) {

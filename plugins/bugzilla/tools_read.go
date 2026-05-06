@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -345,10 +347,92 @@ func toolGetAttachments(params, _ json.RawMessage) (any, error) {
 	}, nil
 }
 
-// --- bugzilla_download_attachment (stub — implemented in commit 4) ---
+// --- bugzilla_download_attachment ---
 
-func toolDownloadAttachment(_ /* params */, _ /* config */ json.RawMessage) (any, error) {
-	return nil, &handler.Error{Code: "not_implemented", Message: "bugzilla_download_attachment not yet implemented"}
+type downloadAttachmentParams struct {
+	AttachmentID any `json:"attachment_id"`
+}
+
+func toolDownloadAttachment(params, _ json.RawMessage) (any, error) {
+	var p downloadAttachmentParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("parse params: %w", err)
+	}
+
+	attID, err := parseBugID(p.AttachmentID)
+	if err != nil {
+		return nil, &handler.Error{Code: "validation_error", Message: err.Error()}
+	}
+
+	if cfg.outputDir == "" {
+		return nil, &handler.Error{
+			Code:    "no_output_dir",
+			Message: "output directory not configured",
+		}
+	}
+
+	path := fmt.Sprintf("/rest/bug/attachment/%d", attID)
+	resp, err := plug.HTTP("GET", path)
+	if err != nil {
+		return nil, fmt.Errorf("download attachment: %w", err)
+	}
+	if resp.Status >= 400 {
+		return nil, parseAPIError(resp)
+	}
+
+	// Response envelope: {"attachments": {"<att_id>": {attachment_obj}}}
+	var envelope struct {
+		Attachments map[string]struct {
+			Data        string `json:"data"`
+			FileName    string `json:"file_name"`
+			ContentType string `json:"content_type"`
+			Size        int    `json:"size"`
+		} `json:"attachments"`
+	}
+	if err := json.Unmarshal(resp.Body, &envelope); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+
+	idStr := strconv.Itoa(attID)
+	att, ok := envelope.Attachments[idStr]
+	if !ok {
+		return nil, &handler.Error{
+			Code:    "not_found",
+			Message: fmt.Sprintf("attachment %d not found in response", attID),
+		}
+	}
+
+	decoded, err := base64Decode(att.Data)
+	if err != nil {
+		return nil, fmt.Errorf("decode attachment data: %w", err)
+	}
+
+	if len(decoded) > maxAttachBytes {
+		return nil, &handler.Error{
+			Code:    "too_large",
+			Message: fmt.Sprintf("attachment exceeds %dMB limit (%d bytes)", maxAttachMB, len(decoded)),
+		}
+	}
+
+	filename := sanitizeFilename(att.FileName, attID)
+	outPath := filepath.Join("bugzilla", "attachments", filename)
+
+	resolvedPath, err := confineWrite(outPath, cfg.outputDir)
+	if err != nil {
+		return nil, fmt.Errorf("path confinement: %w", err)
+	}
+
+	if err := os.WriteFile(resolvedPath, decoded, 0o600); err != nil {
+		return nil, fmt.Errorf("write file: %w", err)
+	}
+
+	return map[string]any{
+		"file_path":     resolvedPath,
+		"file_name":     att.FileName,
+		"size":          len(decoded),
+		"content_type":  att.ContentType,
+		"attachment_id": attID,
+	}, nil
 }
 
 // --- bugzilla_whoami ---
