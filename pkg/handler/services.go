@@ -90,6 +90,9 @@ func (p *Plugin) CacheGet(key string) (json.RawMessage, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("cache get %q: %w", key, err)
 	}
+	if resp.Error != nil {
+		return nil, false, fmt.Errorf("cache get %q: %s", key, resp.Error.Message)
+	}
 
 	hit := resp.Hit != nil && *resp.Hit
 	return resp.Value, hit, nil
@@ -119,11 +122,41 @@ func (p *Plugin) CacheSet(key string, value any, ttl int) error {
 	if err != nil {
 		return fmt.Errorf("cache set %q: %w", key, err)
 	}
-
+	if resp.Error != nil {
+		return fmt.Errorf("cache set %q: %s", key, resp.Error.Message)
+	}
 	if resp.OK != nil && !*resp.OK {
 		return fmt.Errorf("cache set %q: rejected by core", key)
 	}
 	return nil
+}
+
+// CacheFlush removes all keys in this plugin's cache namespace.
+// Returns the number of keys flushed.
+func (p *Plugin) CacheFlush() (int, error) {
+	req := Message{
+		ID:   p.nextMsgID("cache"),
+		Type: TypeCacheFlush,
+	}
+
+	p.send(req)
+
+	resp, err := p.waitFor(req.ID, TypeCacheFlush)
+	if err != nil {
+		return 0, fmt.Errorf("cache flush: %w", err)
+	}
+	if resp.Error != nil {
+		return 0, fmt.Errorf("cache flush: %s", resp.Error.Message)
+	}
+	if resp.OK != nil && !*resp.OK {
+		return 0, fmt.Errorf("cache flush: rejected by core")
+	}
+
+	count := 0
+	if resp.Count != nil {
+		count = *resp.Count
+	}
+	return count, nil
 }
 
 // CacheDel deletes a key from the core's cache.
@@ -136,9 +169,12 @@ func (p *Plugin) CacheDel(key string) error {
 
 	p.send(req)
 
-	_, err := p.waitFor(req.ID, TypeCacheDel)
+	resp, err := p.waitFor(req.ID, TypeCacheDel)
 	if err != nil {
 		return fmt.Errorf("cache del %q: %w", key, err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("cache del %q: %s", key, resp.Error.Message)
 	}
 	return nil
 }

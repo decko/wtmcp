@@ -66,6 +66,22 @@ func New() *Plugin {
 	}
 }
 
+// NewForTest creates a Plugin with custom I/O for testing.
+// Plugin handlers in external packages (package main) cannot use the
+// unexported newTestPlugin from handler_test.go. This constructor
+// enables goroutine-based protocol simulation in plugin test suites:
+// connect io.Pipe pairs so the test goroutine acts as a fake core.
+func NewForTest(in io.Reader, out io.Writer) *Plugin {
+	s := bufio.NewScanner(in)
+	s.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	return &Plugin{
+		tools:  make(map[string]ToolFunc),
+		in:     s,
+		out:    out,
+		logger: log.New(io.Discard, "", 0),
+	}
+}
+
 // Handle registers a tool function by name.
 func (p *Plugin) Handle(name string, fn ToolFunc) {
 	p.tools[name] = fn

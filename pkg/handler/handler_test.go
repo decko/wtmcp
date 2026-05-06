@@ -4,22 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"io"
-	"log"
 	"strings"
 	"testing"
 )
 
 func newTestPlugin(input string) (*Plugin, *bytes.Buffer) {
 	out := &bytes.Buffer{}
-	s := bufio.NewScanner(strings.NewReader(input))
-	s.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-	return &Plugin{
-		tools:  make(map[string]ToolFunc),
-		in:     s,
-		out:    out,
-		logger: log.New(io.Discard, "", 0),
-	}, out
+	p := NewForTest(strings.NewReader(input), out)
+	return p, out
 }
 
 func readMessages(t *testing.T, out *bytes.Buffer) []Message {
@@ -164,3 +156,99 @@ func TestEOFWithoutShutdown(t *testing.T) {
 		t.Fatalf("Run should return nil on EOF, got: %v", err)
 	}
 }
+
+func TestCacheFlush(t *testing.T) {
+	count := 42
+	response := Message{
+		ID:    "cache-1",
+		Type:  TypeCacheFlush,
+		OK:    boolPtr(true),
+		Count: &count,
+	}
+	respBytes, _ := json.Marshal(response)
+	input := string(respBytes) + "\n"
+
+	p, out := newTestPlugin(input)
+	got, err := p.CacheFlush()
+	if err != nil {
+		t.Fatalf("CacheFlush: %v", err)
+	}
+	if got != 42 {
+		t.Errorf("count = %d, want 42", got)
+	}
+
+	msgs := readMessages(t, out)
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	if msgs[0].Type != TypeCacheFlush {
+		t.Errorf("type = %s, want %s", msgs[0].Type, TypeCacheFlush)
+	}
+}
+
+func TestCacheFlushRejected(t *testing.T) {
+	response := Message{
+		ID:   "cache-1",
+		Type: TypeCacheFlush,
+		OK:   boolPtr(false),
+	}
+	respBytes, _ := json.Marshal(response)
+	input := string(respBytes) + "\n"
+
+	p, _ := newTestPlugin(input)
+	_, err := p.CacheFlush()
+	if err == nil {
+		t.Fatal("expected error for rejected flush")
+	}
+	if !strings.Contains(err.Error(), "rejected") {
+		t.Errorf("error = %q, want 'rejected'", err.Error())
+	}
+}
+
+func TestCacheFlushCoreError(t *testing.T) {
+	response := Message{
+		ID:   "cache-1",
+		Type: TypeCacheFlush,
+		Error: &Error{
+			Code:    "cache_error",
+			Message: "backend down",
+		},
+	}
+	respBytes, _ := json.Marshal(response)
+	input := string(respBytes) + "\n"
+
+	p, _ := newTestPlugin(input)
+	_, err := p.CacheFlush()
+	if err == nil {
+		t.Fatal("expected error for core cache failure")
+	}
+	if !strings.Contains(err.Error(), "backend down") {
+		t.Errorf("error = %q, want 'backend down'", err.Error())
+	}
+}
+
+func TestCacheFlushEOF(t *testing.T) {
+	p, _ := newTestPlugin("")
+	_, err := p.CacheFlush()
+	if err == nil {
+		t.Fatal("expected error on EOF")
+	}
+	if !strings.Contains(err.Error(), "unexpected EOF") {
+		t.Errorf("error = %q, want 'unexpected EOF'", err.Error())
+	}
+}
+
+func TestNewForTest(t *testing.T) {
+	in := strings.NewReader(`{"id":"s-1","type":"shutdown"}` + "\n")
+	out := &bytes.Buffer{}
+	p := NewForTest(in, out)
+	if err := p.Run(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	msgs := readMessages(t, out)
+	if len(msgs) != 1 || msgs[0].Type != TypeShutdownOK {
+		t.Errorf("expected shutdown_ok, got %v", msgs)
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
