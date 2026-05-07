@@ -332,6 +332,7 @@ func runCheck() error {
 	}
 
 	fmt.Printf("wtmcp %s\n", Version)
+	fmt.Printf("sandbox: %v\n", sandbox.Built())
 	fmt.Printf("workdir: %s\n", result.Workdir)
 	if result.Config.ReadOnly {
 		fmt.Printf("read-only: true (write tools will not be registered)\n")

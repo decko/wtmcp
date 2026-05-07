@@ -18,6 +18,9 @@ import (
 	arapuca "github.com/sergio-correia/go-arapuca"
 )
 
+// Built reports whether the binary includes sandbox support.
+func Built() bool { return true }
+
 // Manager manages sandboxed plugin process lifecycles.
 type Manager struct {
 	base

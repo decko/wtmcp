@@ -13,6 +13,9 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/config"
 )
 
+// Built reports whether the binary includes sandbox support.
+func Built() bool { return false }
+
 // Manager is a no-op sandbox manager for builds without arapuca.
 type Manager struct {
 	base
