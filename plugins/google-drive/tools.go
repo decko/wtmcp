@@ -235,7 +235,7 @@ func exportFileToLocal(fileID, mimeType, outputPath, ext string) (any, error) {
 	if outputPath == "" {
 		outputPath = fmt.Sprintf("%s%s", fileID, ext)
 	}
-	savedPath, err := saveExportFile("", outputPath, content)
+	savedPath, err := writeExportFile("", outputPath, content)
 	if err != nil {
 		return nil, fmt.Errorf("save file: %w", err)
 	}
@@ -357,7 +357,7 @@ func toolExportDocMarkdown(params, _ json.RawMessage) (any, error) {
 		}, nil
 	}
 
-	outputPath, err := saveExportFile(meta.Name, p.OutputPath, content)
+	outputPath, err := writeExportFile(meta.Name, p.OutputPath, content)
 	if err != nil {
 		return nil, fmt.Errorf("save file: %w", err)
 	}

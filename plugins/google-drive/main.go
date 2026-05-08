@@ -14,14 +14,15 @@ import (
 )
 
 var (
-	driveSvc  *drive.Service
-	outputDir string
+	driveSvc *drive.Service
+	plug     *handler.Plugin
 )
 
 func main() {
 	p := handler.New()
+	plug = p
 
-	p.OnInit(func(cfgRaw json.RawMessage) error {
+	p.OnInit(func(_ json.RawMessage) error {
 		client := handler.NewProxyTransport(p).Client()
 		svc, err := drive.NewService(context.Background(), option.WithHTTPClient(client))
 		if err != nil {
@@ -29,10 +30,6 @@ func main() {
 		}
 		driveSvc = svc
 
-		var cfg map[string]string
-		if err := json.Unmarshal(cfgRaw, &cfg); err == nil {
-			outputDir = cfg["_output_dir"]
-		}
 		return nil
 	})
 
