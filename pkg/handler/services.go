@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"unicode/utf8"
 )
 
 // HTTPResponse holds the result of an HTTP request made through the core proxy.
@@ -177,6 +179,134 @@ func (p *Plugin) CacheDel(key string) error {
 		return fmt.Errorf("cache del %q: %s", key, resp.Error.Message)
 	}
 	return nil
+}
+
+// FileWriteOption configures a file write request.
+type FileWriteOption func(*Message)
+
+// FileReadOption configures a file read request.
+type FileReadOption func(*Message)
+
+// WithPermissions sets the file permissions (octal string, e.g., "0640").
+func WithPermissions(mode string) FileWriteOption {
+	return func(m *Message) { m.Permissions = mode }
+}
+
+// WithEncoding sets the content encoding ("text" or "base64").
+func WithEncoding(enc string) FileWriteOption {
+	return func(m *Message) { m.BodyEncoding = enc }
+}
+
+// WithNoMkdir disables automatic parent directory creation.
+func WithNoMkdir() FileWriteOption {
+	return func(m *Message) {
+		f := false
+		m.Mkdir = &f
+	}
+}
+
+// WithReadEncoding sets the encoding for file read responses.
+func WithReadEncoding(enc string) FileReadOption {
+	return func(m *Message) { m.BodyEncoding = enc }
+}
+
+// FileWrite writes content to a file under the plugin's output directory.
+// Returns the absolute resolved path of the written file. Defaults to
+// "text" encoding — content must be valid UTF-8. For binary data, use
+// WithEncoding("base64").
+func (p *Plugin) FileWrite(path string, content []byte, opts ...FileWriteOption) (string, error) {
+	req := Message{
+		ID:           p.nextMsgID("fw"),
+		Type:         TypeFileWrite,
+		Path:         path,
+		Content:      string(content),
+		BodyEncoding: "text",
+		hasContent:   true,
+	}
+	for _, opt := range opts {
+		opt(&req)
+	}
+	// Auto-encode content when base64 encoding is selected.
+	// The Content field was set as string(content) above (raw bytes).
+	// For base64 mode, we must encode it properly before sending.
+	if req.BodyEncoding == "base64" {
+		req.Content = base64.StdEncoding.EncodeToString(content)
+	} else if len(content) > 0 && !utf8.Valid(content) {
+		return "", fmt.Errorf("file write %q: content is not valid UTF-8 (use WithEncoding(\"base64\") for binary data)", path)
+	}
+
+	p.send(req)
+
+	resp, err := p.waitFor(req.ID, TypeFileWriteResponse)
+	if err != nil {
+		return "", fmt.Errorf("file write %q: %w", path, err)
+	}
+	if resp.Error != nil {
+		return "", fmt.Errorf("file write %q: %s", path, resp.Error.Message)
+	}
+	return resp.Path, nil
+}
+
+// FileWriteFrom writes a file using the source_path handoff mechanism.
+// The source file must be in the plugin's tmpdir and have Nlink == 1.
+// Returns the absolute resolved path of the written file.
+func (p *Plugin) FileWriteFrom(path, sourcePath string, opts ...FileWriteOption) (string, error) {
+	req := Message{
+		ID:         p.nextMsgID("fw"),
+		Type:       TypeFileWrite,
+		Path:       path,
+		SourcePath: sourcePath,
+	}
+	for _, opt := range opts {
+		opt(&req)
+	}
+	// source_path mode: encoding is irrelevant (content comes from file).
+	// Clear it to prevent HasContent false-positive in the core.
+	req.BodyEncoding = ""
+
+	p.send(req)
+
+	resp, err := p.waitFor(req.ID, TypeFileWriteResponse)
+	if err != nil {
+		return "", fmt.Errorf("file write from %q: %w", path, err)
+	}
+	if resp.Error != nil {
+		return "", fmt.Errorf("file write from %q: %s", path, resp.Error.Message)
+	}
+	return resp.Path, nil
+}
+
+// FileRead reads a file from the plugin's output directory.
+// Returns the file content. Defaults to "text" encoding.
+func (p *Plugin) FileRead(path string, opts ...FileReadOption) ([]byte, error) {
+	req := Message{
+		ID:   p.nextMsgID("fr"),
+		Type: TypeFileRead,
+		Path: path,
+	}
+	for _, opt := range opts {
+		opt(&req)
+	}
+
+	p.send(req)
+
+	resp, err := p.waitFor(req.ID, TypeFileReadResponse)
+	if err != nil {
+		return nil, fmt.Errorf("file read %q: %w", path, err)
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("file read %q: %s", path, resp.Error.Message)
+	}
+
+	encoding := req.BodyEncoding
+	if encoding == "base64" {
+		decoded, err := base64.StdEncoding.DecodeString(resp.Content)
+		if err != nil {
+			return nil, fmt.Errorf("file read %q: decode base64: %w", path, err)
+		}
+		return decoded, nil
+	}
+	return []byte(resp.Content), nil
 }
 
 // waitFor reads messages from stdin until it gets one matching the given id.

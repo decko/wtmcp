@@ -67,6 +67,36 @@ type Message struct {
 	Keys    []string        `json:"keys,omitempty"`
 	Pattern string          `json:"pattern,omitempty"`
 	Count   *int            `json:"count,omitempty"`
+
+	// hasContent forces the "content" key into JSON even when Content
+	// is empty. Used by FileWrite to support zero-byte file creation.
+	// FileWriteFrom leaves this false so "content" is omitted.
+	hasContent bool
+}
+
+// MarshalJSON implements custom marshaling to conditionally include the
+// "content" key for file_write messages with empty content.
+func (m Message) MarshalJSON() ([]byte, error) {
+	type Alias Message
+	a := (Alias)(m)
+	data, err := json.Marshal(a)
+	if err != nil {
+		return nil, err
+	}
+	if !m.hasContent || m.Content != "" {
+		return data, nil
+	}
+	// Insert "content":"" into the JSON object. The standard marshal
+	// omitted it due to omitempty — we patch it back in.
+	// Find the closing '}' and insert before it.
+	if len(data) > 1 && data[len(data)-1] == '}' {
+		insert := []byte(`,"content":""}`)
+		result := make([]byte, len(data)-1, len(data)-1+len(insert))
+		copy(result, data[:len(data)-1])
+		result = append(result, insert...)
+		return result, nil
+	}
+	return data, nil
 }
 
 // Error is a structured error from a plugin handler.
