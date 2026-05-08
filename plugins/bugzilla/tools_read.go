@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -415,14 +414,10 @@ func toolDownloadAttachment(params, _ json.RawMessage) (any, error) {
 	}
 
 	filename := sanitizeFilename(att.FileName, attID)
-	outPath := filepath.Join("bugzilla", "attachments", filename)
+	outPath := filepath.Join("attachments", filename)
 
-	resolvedPath, err := confineWrite(outPath, cfg.outputDir)
+	resolvedPath, err := plug.FileWrite(outPath, decoded, handler.WithEncoding("base64"))
 	if err != nil {
-		return nil, fmt.Errorf("path confinement: %w", err)
-	}
-
-	if err := os.WriteFile(resolvedPath, decoded, 0o600); err != nil {
 		return nil, fmt.Errorf("write file: %w", err)
 	}
 

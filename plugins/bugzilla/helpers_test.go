@@ -345,46 +345,6 @@ func TestSanitizeFilename(t *testing.T) {
 	}
 }
 
-func TestConfineWrite(t *testing.T) {
-	base := t.TempDir()
-
-	t.Run("normal", func(t *testing.T) {
-		got, err := confineWrite("subdir/file.txt", base)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !strings.HasPrefix(got, base) {
-			t.Errorf("result %q not under base %q", got, base)
-		}
-	})
-
-	t.Run("traversal", func(t *testing.T) {
-		_, err := confineWrite("../../../etc/passwd", base)
-		if err == nil {
-			t.Fatal("expected error for path traversal")
-		}
-	})
-
-	t.Run("empty base", func(t *testing.T) {
-		_, err := confineWrite("file.txt", "")
-		if err == nil {
-			t.Fatal("expected error for empty base")
-		}
-	})
-
-	t.Run("symlink in parent", func(t *testing.T) {
-		outside := t.TempDir()
-		link := filepath.Join(base, "escape")
-		if err := os.Symlink(outside, link); err != nil {
-			t.Skip("cannot create symlink")
-		}
-		_, err := confineWrite(filepath.Join("escape", "file.txt"), base)
-		if err == nil {
-			t.Fatal("expected error for symlink escape")
-		}
-	})
-}
-
 func TestConfineRead(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "test.txt")

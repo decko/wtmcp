@@ -646,6 +646,11 @@ func TestDownloadAttachment(t *testing.T) {
 		},
 	})
 
+	fwReq := bridge.expectFileWrite("/mock/output/attachments/42_patch.diff")
+	if fwReq.BodyEncoding != "base64" {
+		t.Errorf("expected base64 encoding, got %q", fwReq.BodyEncoding)
+	}
+
 	r := collectResult(t, ch)
 	if r.err != nil {
 		t.Fatalf("unexpected error: %v", r.err)
@@ -661,14 +666,8 @@ func TestDownloadAttachment(t *testing.T) {
 	if result["file_name"] != "patch.diff" {
 		t.Errorf("file_name = %v", result["file_name"])
 	}
-
-	filePath, _ := result["file_path"].(string)
-	data, err := os.ReadFile(filePath) //nolint:gosec // test reads file we just wrote
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if string(data) != "hello world" {
-		t.Errorf("file content = %q, want %q", data, "hello world")
+	if result["file_path"] != "/mock/output/attachments/42_patch.diff" {
+		t.Errorf("file_path = %v", result["file_path"])
 	}
 }
 
@@ -687,16 +686,14 @@ func TestDownloadAttachmentFilenameHasID(t *testing.T) {
 		},
 	})
 
+	fwReq := bridge.expectFileWrite("/mock/output/attachments/99_report.txt")
+	if !strings.Contains(fwReq.Path, "99_report.txt") {
+		t.Errorf("file_write path = %q, want to contain 99_report.txt", fwReq.Path)
+	}
+
 	r := collectResult(t, ch)
 	if r.err != nil {
 		t.Fatalf("unexpected error: %v", r.err)
-	}
-
-	result := toMap(t, r.val)
-	filePath, _ := result["file_path"].(string)
-	base := filepath.Base(filePath)
-	if base != "99_report.txt" {
-		t.Errorf("filename = %q, want %q", base, "99_report.txt")
 	}
 }
 
@@ -729,21 +726,14 @@ func TestDownloadAttachmentPathTraversal(t *testing.T) {
 				},
 			})
 
+			fwReq := bridge.expectFileWrite("/mock/output/attachments/1_sanitized")
+			if !strings.HasPrefix(fwReq.Path, "attachments/1_") {
+				t.Errorf("file_write path should start with attachments/1_, got %q", fwReq.Path)
+			}
+
 			r := collectResult(t, ch)
 			if r.err != nil {
 				t.Fatalf("unexpected error: %v", r.err)
-			}
-
-			result := toMap(t, r.val)
-			filePath, _ := result["file_path"].(string)
-
-			if !strings.HasPrefix(filePath, cfg.outputDir) {
-				t.Errorf("file written outside output dir: %s", filePath)
-			}
-
-			base := filepath.Base(filePath)
-			if !strings.HasPrefix(base, "1_") {
-				t.Errorf("filename should start with attachment ID prefix, got %q", base)
 			}
 		})
 	}
@@ -764,16 +754,14 @@ func TestDownloadAttachmentNullByte(t *testing.T) {
 		},
 	})
 
+	fwReq := bridge.expectFileWrite("/mock/output/attachments/1_attachment")
+	if !strings.Contains(fwReq.Path, "1_attachment") {
+		t.Errorf("null byte filename should be sanitized, got path %q", fwReq.Path)
+	}
+
 	r := collectResult(t, ch)
 	if r.err != nil {
 		t.Fatalf("unexpected error: %v", r.err)
-	}
-
-	result := toMap(t, r.val)
-	filePath, _ := result["file_path"].(string)
-	base := filepath.Base(filePath)
-	if base != "1_attachment" {
-		t.Errorf("null byte filename should be sanitized to '1_attachment', got %q", base)
 	}
 }
 
@@ -818,6 +806,8 @@ func TestDownloadAttachmentExactLimit(t *testing.T) {
 		},
 	})
 
+	bridge.expectFileWrite("/mock/output/attachments/1_exact.bin")
+
 	r := collectResult(t, ch)
 	if r.err != nil {
 		t.Fatalf("exact limit should succeed: %v", r.err)
@@ -847,16 +837,6 @@ func TestDownloadAttachmentInvalidBase64(t *testing.T) {
 	r := collectResult(t, ch)
 	if r.err == nil {
 		t.Fatal("expected error for invalid base64")
-	}
-}
-
-func TestDownloadAttachmentNoOutputDir(t *testing.T) {
-	_ = setupToolTest(t)
-	cfg.outputDir = ""
-	ch := callTool(toolDownloadAttachment, map[string]any{"attachment_id": "1"})
-	r := collectResult(t, ch)
-	if r.err == nil {
-		t.Fatal("expected error when output dir is empty")
 	}
 }
 

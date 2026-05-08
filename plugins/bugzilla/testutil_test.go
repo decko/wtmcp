@@ -34,8 +34,10 @@ func setupToolTest(t *testing.T) *mockBridge {
 	cfg.outputDir = t.TempDir()
 	cfg.sessionDir = t.TempDir()
 
+	scanner := bufio.NewScanner(bridgeIn)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024) // 16MB max line
 	bridge := &mockBridge{
-		in:  bufio.NewScanner(bridgeIn),
+		in:  scanner,
 		out: bridgeOut,
 		t:   t,
 	}
@@ -155,6 +157,34 @@ func (b *mockBridge) expectCacheFlush(count int) handler.Message {
 		Type:  handler.TypeCacheFlush,
 		OK:    &ok,
 		Count: &count,
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		b.t.Fatalf("bridge: marshal response: %v", err)
+	}
+	_, _ = fmt.Fprintf(b.out, "%s\n", data)
+	return req
+}
+
+func (b *mockBridge) expectFileWrite(resultPath string) handler.Message {
+	b.t.Helper()
+	if !b.in.Scan() {
+		b.t.Fatal("bridge: expected file_write request, got EOF")
+	}
+	var req handler.Message
+	if err := json.Unmarshal(b.in.Bytes(), &req); err != nil {
+		b.t.Fatalf("bridge: unmarshal request: %v", err)
+	}
+	if req.Type != handler.TypeFileWrite {
+		b.t.Fatalf("bridge: expected file_write, got %s", req.Type)
+	}
+
+	size := int64(len(req.Content))
+	resp := handler.Message{
+		ID:   req.ID,
+		Type: handler.TypeFileWriteResponse,
+		Path: resultPath,
+		Size: &size,
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
