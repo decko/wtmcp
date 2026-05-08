@@ -34,7 +34,13 @@ type Message struct {
 	Content   string        `json:"content,omitempty"`
 	MIMEType  string        `json:"mime_type,omitempty"`
 
-	// http_request / http_response fields
+	// http_request / http_response / file_write / file_read fields
+	//
+	// Path: HTTP endpoint path (http_request) or relative/resolved
+	// file path (file_write, file_read, file_write_response).
+	// Content: resource content (read_resource_ok) or file content
+	// (file_write inline, file_read_response).
+	// BodyEncoding: HTTP body encoding or file content encoding.
 	NoAuth       bool              `json:"no_auth,omitempty"`
 	Method       string            `json:"method,omitempty"`
 	Path         string            `json:"path,omitempty"`
@@ -44,6 +50,12 @@ type Message struct {
 	Body         json.RawMessage   `json:"body,omitempty"`
 	BodyEncoding string            `json:"body_encoding,omitempty"`
 	Status       int               `json:"status,omitempty"`
+
+	// file_write / file_read fields
+	SourcePath  string `json:"source_path,omitempty"`
+	Permissions string `json:"permissions,omitempty"`
+	Mkdir       *bool  `json:"mkdir,omitempty"`
+	Size        *int64 `json:"size,omitempty"`
 
 	// cache fields
 	Key     string          `json:"key,omitempty"`
@@ -69,24 +81,28 @@ func (e *Error) Error() string {
 
 // Message type constants (wire-compatible with core protocol).
 const (
-	TypeInit            = "init"
-	TypeInitOK          = "init_ok"
-	TypeInitError       = "init_error"
-	TypeShutdown        = "shutdown"
-	TypeShutdownOK      = "shutdown_ok"
-	TypeToolCall        = "tool_call"
-	TypeToolResult      = "tool_result"
-	TypeHTTPRequest     = "http_request"
-	TypeHTTPResponse    = "http_response"
-	TypeCacheGet        = "cache_get"
-	TypeCacheSet        = "cache_set"
-	TypeCacheDel        = "cache_del"
-	TypeCacheList       = "cache_list"
-	TypeCacheFlush      = "cache_flush"
-	TypeListResources   = "list_resources"
-	TypeListResourcesOK = "list_resources_ok"
-	TypeReadResource    = "read_resource"
-	TypeReadResourceOK  = "read_resource_ok"
+	TypeInit              = "init"
+	TypeInitOK            = "init_ok"
+	TypeInitError         = "init_error"
+	TypeShutdown          = "shutdown"
+	TypeShutdownOK        = "shutdown_ok"
+	TypeToolCall          = "tool_call"
+	TypeToolResult        = "tool_result"
+	TypeHTTPRequest       = "http_request"
+	TypeHTTPResponse      = "http_response"
+	TypeCacheGet          = "cache_get"
+	TypeCacheSet          = "cache_set"
+	TypeCacheDel          = "cache_del"
+	TypeCacheList         = "cache_list"
+	TypeCacheFlush        = "cache_flush"
+	TypeFileWrite         = "file_write"
+	TypeFileWriteResponse = "file_write_response"
+	TypeFileRead          = "file_read"
+	TypeFileReadResponse  = "file_read_response"
+	TypeListResources     = "list_resources"
+	TypeListResourcesOK   = "list_resources_ok"
+	TypeReadResource      = "read_resource"
+	TypeReadResourceOK    = "read_resource_ok"
 )
 
 // ResourceDef describes a resource provided by a plugin handler.
