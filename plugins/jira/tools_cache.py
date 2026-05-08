@@ -6,7 +6,6 @@ debug_fields which queries the Jira field list).
 """
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,23 +28,24 @@ def _get_session_dir():
     return handler.config.get("_session_dir", "")
 
 
-def _validate_export_path(file_path):
-    """Validate and resolve an export file path within the output directory."""
-    output_dir = _get_output_dir()
-    if not output_dir:
-        raise ValueError("save requires a configured output directory")
+def _normalize_export_path(file_path):
+    """Normalize an export file path to a relative path for file_write.
+
+    Accepts both relative paths and absolute paths (strips the outputDir
+    prefix for backward compatibility). The core handles confinement.
+    """
     if not file_path:
         raise ValueError("output_file is required")
     path = Path(file_path)
-    if not path.is_absolute():
-        path = Path(output_dir) / path
-    resolved = path.resolve()
-    base = Path(output_dir).resolve()
-    try:
-        resolved.relative_to(base)
-    except ValueError:
-        raise ValueError(f"path escapes output directory: {file_path}")
-    return resolved
+    if path.is_absolute():
+        output_dir = _get_output_dir()
+        if output_dir:
+            try:
+                return str(path.relative_to(Path(output_dir).resolve()))
+            except ValueError:
+                pass
+        raise ValueError(f"absolute path '{file_path}' is outside the output directory; use a relative path instead")
+    return str(path)
 
 
 def _validate_read_path(file_path):
@@ -78,7 +78,7 @@ def export_sprint_data(params):
     sprint_id = params.get("sprint_id", "")
     output_file = params.get("output_file", "")
 
-    path = _validate_export_path(output_file)
+    rel_path = _normalize_export_path(output_file)
 
     # Fetch sprint info
     status, sprint_info, _ = handler.http("GET", f"/rest/agile/1.0/sprint/{sprint_id}")
@@ -106,14 +106,12 @@ def export_sprint_data(params):
         "issues": issues,
     }
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(export_data, f, indent=2, ensure_ascii=False)
+    content = json.dumps(export_data, indent=2, ensure_ascii=False)
+    saved_path = handler.file_write(rel_path, content)
 
     return {
         "success": True,
-        "file_path": str(path),
+        "file_path": saved_path,
         "issue_count": len(issues),
         "sprint_name": sprint_info.get("name") if isinstance(sprint_info, dict) else None,
     }
@@ -125,7 +123,7 @@ def export_board_sprints(params):
     state = params.get("state")
     output_file = params.get("output_file", "")
 
-    path = _validate_export_path(output_file)
+    rel_path = _normalize_export_path(output_file)
 
     # Paginate sprints
     all_sprints: list = []
@@ -153,12 +151,10 @@ def export_board_sprints(params):
         "sprints": {"values": all_sprints, "isLast": True},
     }
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(export_data, f, indent=2, ensure_ascii=False)
+    content = json.dumps(export_data, indent=2, ensure_ascii=False)
+    saved_path = handler.file_write(rel_path, content)
 
-    return {"success": True, "file_path": str(path), "sprint_count": len(all_sprints)}
+    return {"success": True, "file_path": saved_path, "sprint_count": len(all_sprints)}
 
 
 def export_sprint_report(params):
@@ -170,7 +166,7 @@ def export_sprint_report(params):
     if handler.is_cloud:
         return {"error": "Sprint reports are not available on Jira Cloud."}
 
-    path = _validate_export_path(output_file)
+    rel_path = _normalize_export_path(output_file)
 
     status, report, _ = handler.http(
         "GET",
@@ -190,12 +186,10 @@ def export_sprint_report(params):
         "report": report,
     }
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(export_data, f, indent=2, ensure_ascii=False)
+    content = json.dumps(export_data, indent=2, ensure_ascii=False)
+    saved_path = handler.file_write(rel_path, content)
 
-    return {"success": True, "file_path": str(path)}
+    return {"success": True, "file_path": saved_path}
 
 
 def query_local_sprint_data(params):

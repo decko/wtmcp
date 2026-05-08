@@ -69,35 +69,29 @@ def _write_export(tmp_path, data=None, name="sprint.json"):
     return str(path)
 
 
-# --- _validate_export_path ---
+# --- _normalize_export_path ---
 
 
-class TestValidateExportPath:
-    def test_resolves_relative(self, tmp_path):
-        path = tools_cache._validate_export_path("out.json")
-        assert path.name == "out.json"
-        assert str(path).startswith(str(tmp_path))
+class TestNormalizeExportPath:
+    def test_relative_passthrough(self):
+        result = tools_cache._normalize_export_path("out.json")
+        assert result == "out.json"
 
-    def test_resolves_absolute_inside(self, tmp_path):
-        path = tools_cache._validate_export_path(str(tmp_path / "out.json"))
-        assert path.name == "out.json"
+    def test_relative_with_subdir(self):
+        result = tools_cache._normalize_export_path("sub/dir/out.json")
+        assert result == "sub/dir/out.json"
 
-    def test_rejects_outside(self, tmp_path):
-        with pytest.raises(ValueError, match="escapes output directory"):
-            tools_cache._validate_export_path("/etc/evil.json")
+    def test_absolute_strips_output_dir(self, tmp_path):
+        result = tools_cache._normalize_export_path(str(tmp_path / "out.json"))
+        assert result == "out.json"
 
-    def test_rejects_traversal(self, tmp_path):
-        with pytest.raises(ValueError, match="escapes output directory"):
-            tools_cache._validate_export_path("../../etc/passwd")
+    def test_absolute_outside_rejects(self):
+        with pytest.raises(ValueError, match="outside the output directory"):
+            tools_cache._normalize_export_path("/etc/evil.json")
 
     def test_rejects_empty(self):
         with pytest.raises(ValueError, match="output_file is required"):
-            tools_cache._validate_export_path("")
-
-    def test_rejects_no_output_dir(self):
-        handler.config.pop("_output_dir", None)
-        with pytest.raises(ValueError, match="configured output directory"):
-            tools_cache._validate_export_path("file.json")
+            tools_cache._normalize_export_path("")
 
 
 # --- _validate_read_path ---
@@ -163,16 +157,21 @@ class TestExportSprintData:
         sprint_info = {"id": 1, "name": "Sprint 1"}
         issues_resp = {"issues": [{"key": "P-1"}]}
 
-        call_count = 0
-
         def mock_http(_method, path, **_kwargs):
-            nonlocal call_count
-            call_count += 1
             if "sprint/1" in path and "issue" not in path:
                 return 200, sprint_info, {}
             return 200, issues_resp, {}
 
-        with patch.object(handler, "http", side_effect=mock_http):
+        def mock_file_write(path, content, **_kw):
+            dest = tmp_path / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content, encoding="utf-8")
+            return str(dest)
+
+        with (
+            patch.object(handler, "http", side_effect=mock_http),
+            patch.object(handler, "file_write", side_effect=mock_file_write),
+        ):
             result = tools_cache.export_sprint_data(
                 {
                     "board_id": "10",
@@ -182,8 +181,7 @@ class TestExportSprintData:
             )
             assert result["success"] is True
             assert result["issue_count"] == 1
-            # Verify file was created
-            assert os.path.exists(str(tmp_path / "out.json"))
+            assert os.path.exists(result["file_path"])
 
 
 # --- jira_query_local_sprint_data ---
