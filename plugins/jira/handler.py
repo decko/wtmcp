@@ -8,6 +8,7 @@ by the core. Cache is provided by the core cache service.
 Zero dependencies beyond Python stdlib.
 """
 
+import base64
 import json
 import sys
 
@@ -197,6 +198,72 @@ def invalidate_cache(*_issue_keys):
         cache_flush()
     except Exception:
         pass  # best-effort — don't mask a successful write
+
+
+def file_write(path, content, encoding="text", permissions="0600", mkdir=True):
+    """Write a file to the plugin's output directory via the core.
+
+    Returns the absolute resolved path of the written file.
+    For binary content, pass bytes and encoding="base64".
+    """
+    if encoding == "base64" and isinstance(content, bytes):
+        content = base64.b64encode(content).decode()
+    msg = {
+        "id": _gen_id("fw"),
+        "type": "file_write",
+        "path": path,
+        "content": content,
+        "body_encoding": encoding,
+        "permissions": permissions,
+    }
+    if not mkdir:
+        msg["mkdir"] = False
+    _send(msg)
+    resp = _recv()
+    if resp.get("error"):
+        raise IOError(resp["error"]["message"])
+    return resp["path"]
+
+
+def file_write_from(path, source_path, permissions="0600", mkdir=True):
+    """Write a file using source_path handoff (for large files).
+
+    The source file must be in the plugin's tmpdir and have Nlink == 1.
+    Returns the absolute resolved path of the written file.
+    """
+    msg = {
+        "id": _gen_id("fw"),
+        "type": "file_write",
+        "path": path,
+        "source_path": source_path,
+        "permissions": permissions,
+    }
+    if not mkdir:
+        msg["mkdir"] = False
+    _send(msg)
+    resp = _recv()
+    if resp.get("error"):
+        raise IOError(resp["error"]["message"])
+    return resp["path"]
+
+
+def file_read(path, encoding="text"):
+    """Read a file from the plugin's output directory via the core.
+
+    Returns the file content as a string. For binary files, use
+    encoding="base64" and decode the result.
+    """
+    msg = {
+        "id": _gen_id("fr"),
+        "type": "file_read",
+        "path": path,
+        "body_encoding": encoding,
+    }
+    _send(msg)
+    resp = _recv()
+    if resp.get("error"):
+        raise IOError(resp["error"]["message"])
+    return resp.get("content", "")
 
 
 def _detect_cloud():
