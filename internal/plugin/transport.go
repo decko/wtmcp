@@ -161,6 +161,42 @@ func (t *Transport) ReadLoop(pluginName string, concurrency int, serviceHandler 
 				}(ctx, msg)
 			}
 
+		case protocol.TypeFileWrite, protocol.TypeFileRead:
+			ctxPtr := t.toolCtx.Load()
+			if ctxPtr == nil {
+				resp := fileIOError(msg.ID, msg.Type, "file I/O not allowed outside tool calls")
+				if err := t.Send(resp); err != nil {
+					log.Printf("[%s] failed to send file_io error: %v", pluginName, err)
+				}
+				continue
+			}
+			ctx := *ctxPtr
+			switch {
+			case concurrency <= 1:
+				resp := serviceHandler.HandleFileIO(ctx, pluginName, msg)
+				if err := t.Send(resp); err != nil {
+					log.Printf("[%s] failed to send file_io response: %v", pluginName, err)
+				}
+			case msg.Type == protocol.TypeFileWrite:
+				// Writes use WithoutCancel: abandoning a write mid-atomic-
+				// sequence leaves stale temp files and silently loses data.
+				// Reads are safe to cancel — no side effects.
+				fioCtx := context.WithoutCancel(ctx)
+				go func(c context.Context, m protocol.Message) {
+					resp := serviceHandler.HandleFileIO(c, pluginName, m)
+					if err := t.Send(resp); err != nil {
+						log.Printf("[%s] failed to send file_io response: %v", pluginName, err)
+					}
+				}(fioCtx, msg)
+			default:
+				go func(c context.Context, m protocol.Message) {
+					resp := serviceHandler.HandleFileIO(c, pluginName, m)
+					if err := t.Send(resp); err != nil {
+						log.Printf("[%s] failed to send file_io response: %v", pluginName, err)
+					}
+				}(ctx, msg)
+			}
+
 		case protocol.TypeToolResult, protocol.TypeInitOK, protocol.TypeInitError, protocol.TypeShutdownOK, protocol.TypeAuthResponse,
 			protocol.TypeListResourcesOK, protocol.TypeReadResourceOK:
 			if ch, ok := t.pending.LoadAndDelete(msg.ID); ok {
@@ -195,9 +231,24 @@ func (t *Transport) ForwardStderr(pluginName string) {
 	}
 }
 
+// fileIOError returns an error response for file I/O operations,
+// mapping request type to response type (file_write → file_write_response).
+func fileIOError(id, reqType, msg string) protocol.Message {
+	respType := protocol.TypeFileWriteResponse
+	if reqType == protocol.TypeFileRead {
+		respType = protocol.TypeFileReadResponse
+	}
+	return protocol.Message{
+		ID:    id,
+		Type:  respType,
+		Error: &protocol.Error{Code: "fileio_error", Message: msg},
+	}
+}
+
 // ServiceHandler handles service requests from plugins.
-// Implemented by the proxy and cache subsystems.
+// Implemented by the proxy, cache, and file I/O subsystems.
 type ServiceHandler interface {
 	HandleHTTP(ctx context.Context, pluginName string, req protocol.Message) protocol.Message
 	HandleCache(ctx context.Context, pluginName string, req protocol.Message) protocol.Message
+	HandleFileIO(ctx context.Context, pluginName string, req protocol.Message) protocol.Message
 }

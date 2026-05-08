@@ -310,6 +310,11 @@ func (h *Handle) callOneshot(ctx context.Context, toolName string, params json.R
 			if err := enc.Encode(resp); err != nil {
 				return nil, fmt.Errorf("send cache response: %w", err)
 			}
+		case protocol.TypeFileWrite, protocol.TypeFileRead:
+			resp := h.handler.HandleFileIO(ctx, h.manifest.Name, msg)
+			if err := enc.Encode(resp); err != nil {
+				return nil, fmt.Errorf("send file_io response: %w", err)
+			}
 		case protocol.TypeToolResult:
 			if msg.Error != nil {
 				return nil, msg.Error

@@ -15,9 +15,12 @@ import (
 
 // mockServiceHandler implements ServiceHandler for testing.
 type mockServiceHandler struct {
-	httpHandler  func(ctx context.Context, pluginName string, req protocol.Message) protocol.Message
-	cacheHandler func(ctx context.Context, pluginName string, req protocol.Message) protocol.Message
+	httpHandler   func(ctx context.Context, pluginName string, req protocol.Message) protocol.Message
+	cacheHandler  func(ctx context.Context, pluginName string, req protocol.Message) protocol.Message
+	fileIOHandler func(ctx context.Context, pluginName string, req protocol.Message) protocol.Message
 }
+
+var _ ServiceHandler = (*mockServiceHandler)(nil)
 
 func (m *mockServiceHandler) HandleHTTP(ctx context.Context, pluginName string, req protocol.Message) protocol.Message {
 	if m.httpHandler != nil {
@@ -32,6 +35,13 @@ func (m *mockServiceHandler) HandleCache(ctx context.Context, pluginName string,
 	}
 	hit := true
 	return protocol.Message{ID: req.ID, Type: protocol.TypeCacheGet, Hit: &hit}
+}
+
+func (m *mockServiceHandler) HandleFileIO(ctx context.Context, pluginName string, req protocol.Message) protocol.Message {
+	if m.fileIOHandler != nil {
+		return m.fileIOHandler(ctx, pluginName, req)
+	}
+	return protocol.Message{ID: req.ID, Type: protocol.TypeFileWriteResponse, Path: "/mock/path"}
 }
 
 func TestTransportSend(t *testing.T) {
@@ -362,5 +372,165 @@ func TestError(t *testing.T) {
 	expected := "[api_error] not found"
 	if err.Error() != expected {
 		t.Errorf("Error() = %q, want %q", err.Error(), expected)
+	}
+}
+
+// --- File I/O wiring tests ---
+
+func TestReadLoopDispatchesFileWrite(t *testing.T) {
+	fwReq := protocol.Message{ID: "fw-1", Type: protocol.TypeFileWrite, Path: "test.json", Content: "data"}
+	toolResult := protocol.Message{ID: "req-1", Type: protocol.TypeToolResult, Result: json.RawMessage(`{}`)}
+
+	var lines []string
+	for _, msg := range []protocol.Message{fwReq, toolResult} {
+		data, _ := json.Marshal(msg)
+		lines = append(lines, string(data))
+	}
+	pluginStdout := strings.NewReader(strings.Join(lines, "\n") + "\n")
+
+	var pluginStdin bytes.Buffer
+	tr := NewTransport(&pluginStdin, pluginStdout, strings.NewReader(""), 1024*1024)
+
+	fileIOCalled := false
+	handler := &mockServiceHandler{
+		fileIOHandler: func(_ context.Context, _ string, req protocol.Message) protocol.Message {
+			fileIOCalled = true
+			if req.Type != protocol.TypeFileWrite {
+				t.Errorf("expected file_write, got %s", req.Type)
+			}
+			return protocol.Message{ID: req.ID, Type: protocol.TypeFileWriteResponse, Path: "/mock/path"}
+		},
+	}
+
+	// Set tool context so the gate passes.
+	ctx := context.Background()
+	tr.SetToolContext(&ctx)
+
+	ch := make(chan protocol.Message, 1)
+	tr.pending.Store("req-1", ch)
+
+	go tr.ReadLoop("test-plugin", 1, handler)
+
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tool_result")
+	}
+
+	if !fileIOCalled {
+		t.Error("HandleFileIO should have been called for file_write")
+	}
+	if !strings.Contains(pluginStdin.String(), `"file_write_response"`) {
+		t.Error("file_write_response should have been written to plugin stdin")
+	}
+}
+
+func TestReadLoopDispatchesFileRead(t *testing.T) {
+	frReq := protocol.Message{ID: "fr-1", Type: protocol.TypeFileRead, Path: "test.json"}
+	toolResult := protocol.Message{ID: "req-1", Type: protocol.TypeToolResult, Result: json.RawMessage(`{}`)}
+
+	var lines []string
+	for _, msg := range []protocol.Message{frReq, toolResult} {
+		data, _ := json.Marshal(msg)
+		lines = append(lines, string(data))
+	}
+	pluginStdout := strings.NewReader(strings.Join(lines, "\n") + "\n")
+
+	var pluginStdin bytes.Buffer
+	tr := NewTransport(&pluginStdin, pluginStdout, strings.NewReader(""), 1024*1024)
+
+	handler := &mockServiceHandler{
+		fileIOHandler: func(_ context.Context, _ string, req protocol.Message) protocol.Message {
+			if req.Type != protocol.TypeFileRead {
+				t.Errorf("expected file_read, got %s", req.Type)
+			}
+			return protocol.Message{ID: req.ID, Type: protocol.TypeFileReadResponse, Content: "data"}
+		},
+	}
+
+	ctx := context.Background()
+	tr.SetToolContext(&ctx)
+
+	ch := make(chan protocol.Message, 1)
+	tr.pending.Store("req-1", ch)
+
+	go tr.ReadLoop("test-plugin", 1, handler)
+
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tool_result")
+	}
+
+	if !strings.Contains(pluginStdin.String(), `"file_read_response"`) {
+		t.Error("file_read_response should have been written to plugin stdin")
+	}
+}
+
+func TestReadLoopRejectsFileIOWithoutToolContext(t *testing.T) {
+	fwReq := protocol.Message{ID: "fw-1", Type: protocol.TypeFileWrite, Path: "test.json", Content: "data"}
+	toolResult := protocol.Message{ID: "req-1", Type: protocol.TypeToolResult, Result: json.RawMessage(`{}`)}
+
+	var lines []string
+	for _, msg := range []protocol.Message{fwReq, toolResult} {
+		data, _ := json.Marshal(msg)
+		lines = append(lines, string(data))
+	}
+	pluginStdout := strings.NewReader(strings.Join(lines, "\n") + "\n")
+
+	var pluginStdin bytes.Buffer
+	tr := NewTransport(&pluginStdin, pluginStdout, strings.NewReader(""), 1024*1024)
+
+	fileIOCalled := false
+	handler := &mockServiceHandler{
+		fileIOHandler: func(_ context.Context, _ string, _ protocol.Message) protocol.Message {
+			fileIOCalled = true
+			return protocol.Message{}
+		},
+	}
+
+	// Do NOT set tool context — gate should reject.
+	ch := make(chan protocol.Message, 1)
+	tr.pending.Store("req-1", ch)
+
+	go tr.ReadLoop("test-plugin", 1, handler)
+
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tool_result")
+	}
+
+	if fileIOCalled {
+		t.Error("HandleFileIO should NOT have been called without tool context")
+	}
+	output := pluginStdin.String()
+	if !strings.Contains(output, `"fileio_error"`) {
+		t.Error("error response should contain fileio_error code")
+	}
+	if !strings.Contains(output, "not allowed outside tool calls") {
+		t.Error("error should mention 'not allowed outside tool calls'")
+	}
+}
+
+func TestFileIOErrorTypeMapping(t *testing.T) {
+	// file_write request should get file_write_response error
+	resp := fileIOError("fw-1", protocol.TypeFileWrite, "test error")
+	if resp.Type != protocol.TypeFileWriteResponse {
+		t.Errorf("file_write error type = %q, want %q", resp.Type, protocol.TypeFileWriteResponse)
+	}
+
+	// file_read request should get file_read_response error
+	resp = fileIOError("fr-1", protocol.TypeFileRead, "test error")
+	if resp.Type != protocol.TypeFileReadResponse {
+		t.Errorf("file_read error type = %q, want %q", resp.Type, protocol.TypeFileReadResponse)
+	}
+
+	// Verify error fields
+	if resp.Error == nil {
+		t.Fatal("error should be set")
+	}
+	if resp.Error.Code != "fileio_error" {
+		t.Errorf("error code = %q, want %q", resp.Error.Code, "fileio_error")
 	}
 }

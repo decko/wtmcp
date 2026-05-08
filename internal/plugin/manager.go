@@ -17,6 +17,7 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/auth"
 	"github.com/LeGambiArt/wtmcp/internal/cache"
 	"github.com/LeGambiArt/wtmcp/internal/config"
+	"github.com/LeGambiArt/wtmcp/internal/fileio"
 	"github.com/LeGambiArt/wtmcp/internal/protocol"
 	"github.com/LeGambiArt/wtmcp/internal/proxy"
 	"github.com/LeGambiArt/wtmcp/internal/sandbox"
@@ -282,6 +283,7 @@ func (m *Manager) LoadAll(ctx context.Context) error {
 
 			// Non-persistent plugins are already fully loaded.
 			if handle.manifest.Execution != "persistent" {
+				m.registerPluginDirs(name, handle)
 				log.Printf("loaded plugin %s (v%s, %s)", name, handle.manifest.Version, handle.manifest.Execution)
 				continue
 			}
@@ -387,6 +389,7 @@ func (m *Manager) startLevel(ctx context.Context, names []string) {
 		}
 		log.Printf("loaded plugin %s (v%s, %s, %s)", r.name,
 			r.handle.manifest.Version, r.handle.manifest.Execution, r.duration.Round(time.Millisecond))
+		m.registerPluginDirs(r.name, r.handle)
 		m.registerDynamicDomains(r.name, r.handle)
 		m.registerAuthBindings(r.name, r.handle)
 	}
@@ -408,6 +411,10 @@ func (m *Manager) Load(ctx context.Context, name string) error {
 		}
 	}
 
+	// Register file I/O directories after Start() so PrepareDirs has
+	// created them and EvalSymlinks can resolve through symlinks.
+	m.registerPluginDirs(name, handle)
+
 	m.registerDynamicDomains(name, handle)
 	m.registerAuthBindings(name, handle)
 
@@ -420,6 +427,28 @@ func (m *Manager) Load(ctx context.Context, name string) error {
 }
 
 const maxDynamicDomains = 10
+
+// registerPluginDirs resolves and registers file I/O directories for
+// a plugin. Called after Start() so PrepareDirs has created the dirs
+// and EvalSymlinks can resolve through any symlinks (e.g., container
+// runtimes that symlink /tmp).
+func (m *Manager) registerPluginDirs(name string, handle *Handle) {
+	if handle.outputDir == "" {
+		return
+	}
+	resolvedOutput, err := filepath.EvalSymlinks(handle.outputDir)
+	if err != nil {
+		resolvedOutput = handle.outputDir
+	}
+	var resolvedTmp string
+	if m.sbMgr != nil {
+		resolvedTmp, err = filepath.EvalSymlinks(m.sbMgr.TmpDir(name))
+		if err != nil {
+			resolvedTmp = m.sbMgr.TmpDir(name)
+		}
+	}
+	m.svcHandler.registerPluginDirs(name, resolvedOutput, resolvedTmp)
+}
 
 // registerDynamicDomains validates and registers domains from the
 // plugin's init_ok response with the proxy allowlist.
@@ -743,6 +772,11 @@ func (m *Manager) preparePlugin(ctx context.Context, name string) (*Handle, erro
 	if m.sbMgr != nil {
 		handle.SetSandbox(m.sbMgr)
 	}
+
+	if handle.outputDir != "" {
+		fileio.CleanupStaleTempFiles(handle.outputDir)
+	}
+
 	return handle, nil
 }
 
@@ -762,6 +796,7 @@ func (m *Manager) Unload(ctx context.Context, name string) error {
 	if err := handle.Stop(ctx); err != nil {
 		return err
 	}
+	m.svcHandler.unregisterPluginDirs(name)
 	log.Printf("unloaded plugin %s", name)
 	return nil
 }
@@ -923,6 +958,7 @@ func (m *Manager) disablePlugin(name, reason string) {
 		Manifest: manifest,
 	}
 	delete(m.handles, name)
+	m.svcHandler.unregisterPluginDirs(name)
 	m.handlesMu.Unlock()
 
 	if m.proxy != nil {
@@ -1530,10 +1566,17 @@ func (m *Manager) sortedByPriority() []string {
 	return names
 }
 
-// serviceHandlerImpl implements ServiceHandler by delegating to proxy and cache.
+// pluginDirs holds the EvalSymlinks-resolved directories for a plugin.
+type pluginDirs struct {
+	outputDir string
+	tmpDir    string
+}
+
+// serviceHandlerImpl implements ServiceHandler by delegating to proxy, cache, and fileio.
 type serviceHandlerImpl struct {
 	proxy *proxy.Proxy
 	cache cache.Store
+	dirs  sync.Map // pluginName -> pluginDirs
 }
 
 func (s *serviceHandlerImpl) HandleHTTP(ctx context.Context, pluginName string, req protocol.Message) protocol.Message {
@@ -1608,6 +1651,75 @@ func (s *serviceHandlerImpl) HandleCache(ctx context.Context, pluginName string,
 			Error: &protocol.Error{Code: "unknown_cache_op", Message: "unknown cache operation: " + req.Type},
 		}
 	}
+}
+
+func (s *serviceHandlerImpl) HandleFileIO(_ context.Context, pluginName string, req protocol.Message) protocol.Message {
+	v, ok := s.dirs.Load(pluginName)
+	if !ok {
+		return fileIOError(req.ID, req.Type, "plugin not configured for file I/O")
+	}
+	dirs := v.(pluginDirs)
+
+	switch req.Type {
+	case protocol.TypeFileWrite:
+		writeReq := fileio.WriteRequest{
+			Path:        req.Path,
+			Content:     req.Content,
+			HasContent:  req.Content != "" || (req.BodyEncoding != "" && req.SourcePath == ""),
+			SourcePath:  req.SourcePath,
+			Encoding:    req.BodyEncoding,
+			Permissions: req.Permissions,
+			Mkdir:       req.Mkdir,
+		}
+		cfg := fileio.Config{
+			OutputDir: dirs.outputDir,
+			TmpDir:    dirs.tmpDir,
+		}
+		result, err := fileio.WriteFile(cfg, writeReq)
+		if err != nil {
+			return fileIOError(req.ID, req.Type, err.Error())
+		}
+		size := result.Size
+		return protocol.Message{
+			ID:   req.ID,
+			Type: protocol.TypeFileWriteResponse,
+			Path: result.Path,
+			Size: &size,
+		}
+
+	case protocol.TypeFileRead:
+		readReq := fileio.ReadRequest{
+			Path:     req.Path,
+			Encoding: req.BodyEncoding,
+		}
+		cfg := fileio.Config{
+			OutputDir: dirs.outputDir,
+			TmpDir:    dirs.tmpDir,
+		}
+		result, err := fileio.ReadFile(cfg, readReq)
+		if err != nil {
+			return fileIOError(req.ID, req.Type, err.Error())
+		}
+		return protocol.Message{
+			ID:      req.ID,
+			Type:    protocol.TypeFileReadResponse,
+			Content: result.Content,
+			Path:    result.Path,
+		}
+
+	default:
+		return fileIOError(req.ID, req.Type, "unknown file I/O operation: "+req.Type)
+	}
+}
+
+// registerPluginDirs stores EvalSymlinks-resolved directories for a plugin.
+func (s *serviceHandlerImpl) registerPluginDirs(name, outputDir, tmpDir string) {
+	s.dirs.Store(name, pluginDirs{outputDir: outputDir, tmpDir: tmpDir})
+}
+
+// unregisterPluginDirs removes a plugin's directory registration.
+func (s *serviceHandlerImpl) unregisterPluginDirs(name string) {
+	s.dirs.Delete(name)
 }
 
 func cacheError(id, msgType string, err error) protocol.Message {

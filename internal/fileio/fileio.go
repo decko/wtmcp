@@ -260,7 +260,7 @@ func resolvePath(outputDir, path string, mkdir *bool) (string, error) {
 	parentDir := filepath.Dir(cleaned)
 	if mkdir == nil || *mkdir {
 		if err := os.MkdirAll(parentDir, dirMode); err != nil {
-			return "", fmt.Errorf("create directory: %w", err)
+			return "", fmt.Errorf("create parent directory failed")
 		}
 	}
 
@@ -271,7 +271,7 @@ func resolvePath(outputDir, path string, mkdir *bool) (string, error) {
 	// Step 8: Post-mkdir symlink re-check.
 	resolvedParent, err := filepath.EvalSymlinks(parentDir)
 	if err != nil {
-		return "", fmt.Errorf("resolve parent directory: %w", err)
+		return "", fmt.Errorf("resolve parent directory failed")
 	}
 	if !strings.HasPrefix(resolvedParent, resolvedBase+string(os.PathSeparator)) && resolvedParent != resolvedBase {
 		return "", fmt.Errorf("path escapes allowed directory")
@@ -314,7 +314,7 @@ func resolveReadPath(outputDir, path string) (string, error) {
 		if os.IsNotExist(err) {
 			return "", fmt.Errorf("file not found")
 		}
-		return "", fmt.Errorf("resolve path: %w", err)
+		return "", fmt.Errorf("resolve path failed")
 	}
 
 	// Prefix check on the fully resolved path.
