@@ -11,6 +11,9 @@ Zero dependencies beyond Python stdlib.
 import json
 import sys
 
+if __name__ == "__main__":
+    sys.modules.setdefault("handler", sys.modules[__name__])
+
 _next_id = 0
 config = {}
 
