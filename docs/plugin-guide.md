@@ -493,6 +493,102 @@ Plugin → Core:  {"id": "c-5", "type": "cache_flush"}
 Core → Plugin:  {"id": "c-5", "type": "cache_flush", "ok": true, "count": 42}
 ```
 
+### File I/O
+
+The core provides secure file write and read operations. Plugins
+must NOT write to their output directory directly — all file I/O
+goes through the core service, which enforces path confinement,
+atomic writes, and permission validation.
+
+**Write a file (inline content):**
+
+```
+Plugin → Core:  {"id": "fw-1", "type": "file_write",
+                  "path": "case-01234567.json",
+                  "content": "{\"key\": \"value\"}",
+                  "body_encoding": "text",
+                  "permissions": "0600"}
+Core → Plugin:  {"id": "fw-1", "type": "file_write_response",
+                  "path": "/abs/path/to/case-01234567.json",
+                  "size": 18}
+```
+
+**Write a file (source_path handoff for large files):**
+
+For files larger than a few MB (e.g., downloaded attachments),
+write the content to tmpdir first, then pass the path:
+
+```
+Plugin → Core:  {"id": "fw-2", "type": "file_write",
+                  "path": "attachment.bin",
+                  "source_path": "/tmp/wtmcp/plugin/dl-123.tmp",
+                  "permissions": "0600"}
+Core → Plugin:  {"id": "fw-2", "type": "file_write_response",
+                  "path": "/abs/path/to/attachment.bin",
+                  "size": 1048576}
+```
+
+The source file must be in the plugin's tmpdir and have exactly
+one hard link (Nlink == 1). Hardlink-based dedup in tmpdir is
+not supported — this is a security requirement.
+
+**Read a file:**
+
+```
+Plugin → Core:  {"id": "fr-1", "type": "file_read",
+                  "path": "case-01234567.json",
+                  "body_encoding": "text"}
+Core → Plugin:  {"id": "fr-1", "type": "file_read_response",
+                  "content": "{\"key\": \"value\"}",
+                  "path": "/abs/path/to/case-01234567.json"}
+```
+
+**Fields:**
+
+- `path` — relative path under the plugin's output directory.
+  Supports subdirectories (e.g., `cache/data.json`).
+- `content` — inline content (mutually exclusive with `source_path`).
+- `source_path` — temp-file path for large content (mutually
+  exclusive with `content`).
+- `body_encoding` — `"text"` (default, validates UTF-8) or
+  `"base64"` (for binary data). Case-sensitive.
+- `permissions` — octal file mode (default `"0600"`). No world
+  access, no setuid/setgid/sticky, owner-read required.
+- `mkdir` — create parent directories (default `true`). Set to
+  `false` to require the parent to exist.
+
+**Go SDK helpers:**
+
+```go
+// Write text content
+path, err := p.FileWrite("data.json", []byte(`{"key":"value"}`))
+
+// Write binary content
+path, err := p.FileWrite("image.png", pngBytes, handler.WithEncoding("base64"))
+
+// Write via source_path handoff
+path, err := p.FileWriteFrom("attachment.bin", tmpFilePath)
+
+// Read a file
+data, err := p.FileRead("data.json")
+```
+
+**Python handler functions:**
+
+```python
+# Write text content
+path = handler.file_write("data.json", '{"key": "value"}')
+
+# Write binary content (auto-encodes bytes to base64)
+path = handler.file_write("image.png", png_bytes, encoding="base64")
+
+# Write via source_path handoff
+path = handler.file_write_from("attachment.bin", tmp_file_path)
+
+# Read a file
+content = handler.file_read("data.json")
+```
+
 ### Resources
 
 Plugins can provide MCP resources (read-only data accessible by

@@ -40,6 +40,8 @@ proxying, caching, and output encoding so plugins stay minimal.
 - **HTTP proxy**: Auth injection, domain validation, TLS enforcement,
   binary response encoding, multipart upload support
 - **Cache**: In-memory store with namespace isolation and TTL
+- **File I/O**: Atomic writes, path confinement, size limits, per-plugin
+  output directories, source_path handoff for large files
 - **Output**: TOON encoding for ~40% token savings (optional)
 - **Plugin setup**: Manifest-declared wizard metadata for CLI tooling
 - **Progressive discovery**: Tools default to deferred; only primary
@@ -364,6 +366,8 @@ while True:
   the call with auth and returns `http_response`. No HTTP library needed.
 - **Cache**: plugins send `cache_get`/`cache_set` messages. The core
   manages storage and TTL.
+- **File I/O**: plugins send `file_write`/`file_read` messages. The core
+  handles path confinement, atomic writes, and permission enforcement.
 - **Auth variants**: a single plugin can support multiple auth methods
   (e.g., Cloud Basic + Server Bearer + Kerberos) with auto-detection.
 
@@ -634,6 +638,7 @@ internal/
   auth/                 Auth providers (bearer, basic, kerberos, oauth2)
   cache/                Key-value cache with TTL
   config/               Env var resolution, YAML config
+  fileio/               Secure file I/O (atomic writes, path confinement)
   encoding/             TOON output encoding
   google/               Google OAuth helper (shared by Google plugins)
   plugin/               Manager, manifest, transport, dispatch
