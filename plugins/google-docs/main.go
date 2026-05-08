@@ -16,11 +16,12 @@ import (
 var (
 	docsSvc    *docs.Service
 	sessionDir string
-	outputDir  string
+	plug       *handler.Plugin
 )
 
 func main() {
 	p := handler.New()
+	plug = p
 
 	p.OnInit(func(cfgRaw json.RawMessage) error {
 		client := handler.NewProxyTransport(p).Client()
@@ -33,7 +34,6 @@ func main() {
 		var cfg map[string]string
 		if err := json.Unmarshal(cfgRaw, &cfg); err == nil {
 			sessionDir = cfg["_session_dir"]
-			outputDir = cfg["_output_dir"]
 		}
 		return nil
 	})

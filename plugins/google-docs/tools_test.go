@@ -2254,87 +2254,23 @@ func TestAppendToNonEmptyDocument(t *testing.T) {
 	})
 }
 
-func TestSaveDocumentFile(t *testing.T) {
-	origOutputDir := outputDir
-	t.Cleanup(func() { outputDir = origOutputDir })
-
-	tmpDir := t.TempDir()
-	outputDir = tmpDir
-
-	t.Run("saves with title-derived path", func(t *testing.T) {
-		got, err := saveDocumentFile("My Document", "", "content", ".txt")
-		if err != nil {
-			t.Fatalf("saveDocumentFile: %v", err)
-		}
-		if !strings.Contains(got, "My Document.txt") {
-			t.Errorf("path %q should contain My Document.txt", got)
-		}
-	})
-
-	t.Run("saves with explicit relative path", func(t *testing.T) {
-		got, err := saveDocumentFile("", "custom.txt", "content", ".txt")
-		if err != nil {
-			t.Fatalf("saveDocumentFile: %v", err)
-		}
-		if !strings.HasSuffix(got, "custom.txt") {
-			t.Errorf("path %q should end with custom.txt", got)
-		}
-	})
-
-	t.Run("rejects path traversal", func(t *testing.T) {
-		_, err := saveDocumentFile("", "../../etc/evil.txt", "pwned", ".txt")
-		if err == nil {
-			t.Fatal("expected error for path traversal, got nil")
-		}
-	})
-
-	t.Run("sanitizes title with traversal characters", func(t *testing.T) {
-		got, err := saveDocumentFile("../../etc/evil", "", "content", ".txt")
-		if err != nil {
-			t.Fatalf("saveDocumentFile: %v", err)
-		}
-		resolved, _ := filepath.EvalSymlinks(tmpDir)
-		if !strings.HasPrefix(got, resolved+string(os.PathSeparator)) {
-			t.Errorf("path %q escapes output directory %q", got, resolved)
-		}
-	})
-
-	t.Run("file permissions are 0600", func(t *testing.T) {
-		got, err := saveDocumentFile("", "perms.txt", "secret", ".txt")
-		if err != nil {
-			t.Fatalf("saveDocumentFile: %v", err)
-		}
-		info, err := os.Stat(got)
-		if err != nil {
-			t.Fatalf("stat: %v", err)
-		}
-		if perm := info.Mode().Perm(); perm != 0o600 {
-			t.Errorf("permissions = %o, want 0600", perm)
-		}
-	})
-
-	t.Run("empty outputDir rejected", func(t *testing.T) {
-		outputDir = ""
-		t.Cleanup(func() { outputDir = tmpDir })
-		_, err := saveDocumentFile("test", "", "content", ".txt")
-		if err == nil {
-			t.Fatal("expected error when outputDir is empty")
-		}
-	})
-
-	t.Run("symlink in output dir detected after creation", func(t *testing.T) {
-		outside := t.TempDir()
-		linkDir := filepath.Join(tmpDir, "escape")
-		if err := os.Symlink(outside, linkDir); err != nil {
-			t.Skipf("symlinks not supported: %v", err)
-		}
-		t.Cleanup(func() { _ = os.Remove(linkDir) })
-
-		_, err := saveDocumentFile("", "escape/evil.txt", "pwned", ".txt")
-		if err == nil {
-			t.Fatal("expected error for symlink escaping output dir")
-		}
-	})
+func TestDocTitleSanitization(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"My Document", "My Document.txt"},
+		{"file<>with:bad/chars", "file__with_bad_chars.txt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			safeTitle := reUnsafeChars.ReplaceAllString(tt.input, "_")
+			safeTitle = filepath.Base(safeTitle) + ".txt"
+			if safeTitle != tt.want {
+				t.Errorf("sanitized %q = %q, want %q", tt.input, safeTitle, tt.want)
+			}
+		})
+	}
 }
 
 func TestCodeAnnotations(t *testing.T) {

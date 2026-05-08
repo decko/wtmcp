@@ -106,58 +106,17 @@ func extractDocumentID(input string) string {
 	return ""
 }
 
-// saveDocumentFile saves document content to a local file.
-// If outputPath is empty, saves to <outputDir>/<title>.<ext>.
-func saveDocumentFile(title, outputPath, content, ext string) (string, error) {
-	if outputDir == "" {
-		return "", fmt.Errorf("save requires a configured output directory")
-	}
-
-	absBase, err := filepath.Abs(outputDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve output dir: %w", err)
-	}
-	if resolved, err := filepath.EvalSymlinks(absBase); err == nil {
-		absBase = resolved
-	}
-	baseDir := absBase
-
+// writeDocumentFile writes document content via the core's file I/O service.
+func writeDocumentFile(title, outputPath, content, ext string) (string, error) {
 	if outputPath == "" {
 		safeTitle := reUnsafeChars.ReplaceAllString(title, "_")
 		safeTitle = filepath.Base(safeTitle)
-		outputPath = filepath.Join(baseDir, safeTitle+ext)
-	} else if !filepath.IsAbs(outputPath) {
-		outputPath = filepath.Join(baseDir, outputPath)
+		outputPath = safeTitle + ext
+	} else if filepath.IsAbs(outputPath) {
+		outputPath = filepath.Base(outputPath)
 	}
 
-	absOutput, err := filepath.Abs(outputPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve output path: %w", err)
-	}
-	if !strings.HasPrefix(absOutput, absBase+string(os.PathSeparator)) {
-		return "", fmt.Errorf("output path escapes base directory: %s", outputPath)
-	}
-
-	dir := filepath.Dir(absOutput)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", fmt.Errorf("create output dir: %w", err)
-	}
-
-	// Re-resolve after directory creation to catch symlinks in new dirs
-	resolvedDir, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return "", fmt.Errorf("resolve output dir: %w", err)
-	}
-	finalOutput := filepath.Join(resolvedDir, filepath.Base(absOutput))
-	if !strings.HasPrefix(finalOutput, absBase+string(os.PathSeparator)) {
-		return "", fmt.Errorf("output path escapes base directory after resolution: %s", outputPath)
-	}
-
-	if err := os.WriteFile(finalOutput, []byte(content), 0o600); err != nil {
-		return "", err
-	}
-
-	return finalOutput, nil
+	return plug.FileWrite(outputPath, []byte(content))
 }
 
 // extractText extracts plain text from document content.
@@ -535,7 +494,7 @@ func toolGetDocumentText(params, _ json.RawMessage) (any, error) {
 	}
 
 	if p.SaveToFile {
-		savedPath, err := saveDocumentFile(doc.Title, p.OutputPath, text, ".txt")
+		savedPath, err := writeDocumentFile(doc.Title, p.OutputPath, text, ".txt")
 		if err != nil {
 			return nil, fmt.Errorf("save file: %w", err)
 		}
@@ -592,7 +551,7 @@ func toolGetDocumentMarkdown(params, _ json.RawMessage) (any, error) {
 	}
 
 	if p.SaveToFile {
-		savedPath, err := saveDocumentFile(doc.Title, p.OutputPath, markdown, ".md")
+		savedPath, err := writeDocumentFile(doc.Title, p.OutputPath, markdown, ".md")
 		if err != nil {
 			return nil, fmt.Errorf("save file: %w", err)
 		}
