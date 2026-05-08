@@ -162,28 +162,6 @@ func TestGenerateCacheFilenameTruncatesLong(t *testing.T) {
 	}
 }
 
-func TestCacheDirectory(t *testing.T) {
-	origOutputDir := outputDir
-	t.Cleanup(func() { outputDir = origOutputDir })
-
-	t.Run("with outputDir", func(t *testing.T) {
-		outputDir = "/home/user/project/wtmcp/google-gmail"
-		got := cacheDirectory()
-		want := "/home/user/project/wtmcp/google-gmail/cache"
-		if got != want {
-			t.Errorf("cacheDirectory() = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("empty outputDir returns empty", func(t *testing.T) {
-		outputDir = ""
-		got := cacheDirectory()
-		if got != "" {
-			t.Errorf("cacheDirectory() = %q, want empty", got)
-		}
-	})
-}
-
 // --- toolSendMessage dry_run tests ---
 
 func mustJSON(t *testing.T, v any) []byte {

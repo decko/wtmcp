@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/mail"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -166,21 +165,13 @@ func toolFetchAndCache(params, _ json.RawMessage) (any, error) {
 		summaries = append(summaries, extractSummary(msg))
 	}
 
-	// Save to cache
-	cacheDir := cacheDirectory()
-	if cacheDir == "" {
-		return nil, fmt.Errorf("gmail cache requires a configured output directory")
-	}
-	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create cache dir: %w", err)
-	}
-
+	// Save to cache via core file I/O service
 	label := p.Query
 	if label == "" {
 		label = fmt.Sprintf("%d_messages", len(ids))
 	}
 	filename := generateCacheFilename(label)
-	cachePath := filepath.Join(cacheDir, filename)
+	cachePath := filepath.Join("cache", filename)
 
 	cacheData := map[string]any{
 		"query":      p.Query,
@@ -194,7 +185,8 @@ func toolFetchAndCache(params, _ json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal cache: %w", err)
 	}
-	if err := os.WriteFile(cachePath, data, 0o600); err != nil {
+	cachePath, err = plug.FileWrite(cachePath, data)
+	if err != nil {
 		return nil, fmt.Errorf("write cache: %w", err)
 	}
 
@@ -458,13 +450,6 @@ func formatAddress(addr string) string {
 	}
 	a := mail.Address{Address: addr}
 	return a.String()
-}
-
-func cacheDirectory() string {
-	if outputDir != "" {
-		return filepath.Join(outputDir, "cache")
-	}
-	return ""
 }
 
 func generateCacheFilename(label string) string {
