@@ -113,6 +113,7 @@ func safeTransport(allowPrivate bool) *http.Transport {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 }
 
@@ -126,7 +127,7 @@ func SafeTransportWithTLS(allowPrivate bool, tlsCfg TLSConfig) (*http.Transport,
 		return transport, nil
 	}
 
-	goTLS := &tls.Config{} //nolint:gosec // TLS min version managed by Go defaults
+	goTLS := &tls.Config{MinVersion: tls.VersionTLS12}
 
 	// Load CA pool once — used by both RootCAs and chain verifier
 	var caPool *x509.CertPool
