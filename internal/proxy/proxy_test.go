@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/LeGambiArt/wtmcp/internal/audit"
 	"github.com/LeGambiArt/wtmcp/internal/auth"
 	"github.com/LeGambiArt/wtmcp/internal/config"
 	"github.com/LeGambiArt/wtmcp/internal/protocol"
@@ -825,6 +827,54 @@ func TestStripAuthOnCrossDomainRedirect(t *testing.T) {
 		}
 		if req.Header.Get("Authorization") == "" {
 			t.Error("same domain (case-insensitive) should preserve headers")
+		}
+	})
+
+	t.Run("cross domain strips request body", func(t *testing.T) {
+		via := []*http.Request{{URL: mustParse("https://api.example.com/action")}}
+		req := &http.Request{
+			URL:           mustParse("https://evil.com/capture"),
+			Method:        "POST",
+			Body:          io.NopCloser(strings.NewReader(`{"api_key":"secret"}`)),
+			ContentLength: 20,
+			Header: http.Header{
+				"Content-Type":   {"application/json"},
+				"Content-Length": {"20"},
+			},
+		}
+		if err := StripAuthOnCrossDomainRedirect(req, via); err != nil {
+			t.Fatal(err)
+		}
+		if req.Body != http.NoBody {
+			t.Error("request body should be stripped on cross-domain redirect")
+		}
+		if req.ContentLength != 0 {
+			t.Errorf("ContentLength should be 0, got %d", req.ContentLength)
+		}
+		if req.Header.Get("Content-Type") != "" {
+			t.Error("Content-Type should be stripped with body")
+		}
+	})
+
+	t.Run("same domain preserves request body", func(t *testing.T) {
+		via := []*http.Request{{URL: mustParse("https://api.example.com/a")}}
+		req := &http.Request{
+			URL:           mustParse("https://api.example.com/b"),
+			Method:        "POST",
+			Body:          io.NopCloser(strings.NewReader(`{"data":"value"}`)),
+			ContentLength: 16,
+			Header: http.Header{
+				"Content-Type": {"application/json"},
+			},
+		}
+		if err := StripAuthOnCrossDomainRedirect(req, via); err != nil {
+			t.Fatal(err)
+		}
+		if req.Body == http.NoBody {
+			t.Error("request body should be preserved on same-domain redirect")
+		}
+		if req.ContentLength != 16 {
+			t.Errorf("ContentLength should be preserved, got %d", req.ContentLength)
 		}
 	})
 
@@ -2131,5 +2181,45 @@ func TestExecuteNoAccessAnnotationAllowsMutatingMethods(t *testing.T) {
 	})
 	if resp.Error != nil {
 		t.Errorf("unannotated tool POST should be allowed, got error=%v", resp.Error)
+	}
+}
+
+func TestScrubErrorFallbackWithoutAuditor(t *testing.T) {
+	p := newTestProxy(nil)
+
+	jwt := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature"
+	got := p.scrubError("auth failed: token " + jwt + " is expired")
+	if strings.Contains(got, "eyJhbGci") {
+		t.Errorf("JWT should be scrubbed even without auditor, got: %s", got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Errorf("scrubbed output should contain [REDACTED], got: %s", got)
+	}
+}
+
+func TestScrubErrorWithAuditor(t *testing.T) {
+	p := newTestProxy(nil)
+	logFile := filepath.Join(t.TempDir(), "audit.log")
+	auditor, err := audit.New(audit.Config{LogFile: logFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = auditor.Close() }()
+	p.SetAuditor(auditor)
+
+	jwt := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature"
+	got := p.scrubError("auth failed: token " + jwt + " is expired")
+	if strings.Contains(got, "eyJhbGci") {
+		t.Errorf("JWT should be scrubbed with auditor, got: %s", got)
+	}
+}
+
+func TestScrubErrorPassesThroughSafeMessages(t *testing.T) {
+	p := newTestProxy(nil)
+
+	safe := "connection refused: dial tcp 1.2.3.4:443"
+	got := p.scrubError(safe)
+	if got != safe {
+		t.Errorf("safe message should pass through unchanged, got: %s", got)
 	}
 }

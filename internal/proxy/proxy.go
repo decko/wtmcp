@@ -732,14 +732,21 @@ func errResponse(id, code, message string) protocol.Message {
 	}
 }
 
+// fallbackScrubber provides baseline error scrubbing when no audit
+// logger is configured. Ensures sensitive patterns (JWTs, high-entropy
+// tokens) are redacted regardless of deployment configuration.
+var fallbackScrubber = audit.NewScrubber(audit.DefaultScrubFields)
+
 // scrubError redacts sensitive patterns from error messages before
 // returning them to plugins. Prevents leaking internal hostnames,
 // certificate details, and token endpoint URLs in error responses.
+// Uses the audit logger's scrubber when available, falling back to
+// a default scrubber to ensure scrubbing is never skipped.
 func (p *Proxy) scrubError(msg string) string {
 	if p.auditor != nil {
 		return p.auditor.ScrubErrorText(msg)
 	}
-	return msg
+	return fallbackScrubber.ScrubString(msg)
 }
 
 // safeRedirectHeaders are headers preserved on cross-domain redirects.
@@ -763,10 +770,13 @@ var safeRedirectHeaders = map[string]bool{
 }
 
 // StripAuthOnCrossDomainRedirect is a CheckRedirect function that
-// strips all non-safe headers when a redirect crosses domain
-// boundaries. This prevents credential leakage if a plugin's target
-// server redirects to an attacker-controlled domain, including
-// custom auth headers that the previous hardcoded strip list missed.
+// strips all non-safe headers and request body when a redirect
+// crosses domain boundaries. This prevents credential leakage if a
+// plugin's target server redirects to an attacker-controlled domain.
+//
+// For 307/308 redirects, Go preserves the HTTP method and body.
+// Without body stripping, a cross-domain 307 would forward the
+// entire POST body (API keys, file uploads) to the redirect target.
 func StripAuthOnCrossDomainRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
 		return fmt.Errorf("stopped after 10 redirects")
@@ -785,6 +795,14 @@ func StripAuthOnCrossDomainRedirect(req *http.Request, via []*http.Request) erro
 				if !safeRedirectHeaders[http.CanonicalHeaderKey(h)] {
 					req.Header.Del(h)
 				}
+			}
+			// Strip request body on cross-domain redirects to prevent
+			// data leakage via 307/308 method-preserving redirects.
+			if req.Body != nil {
+				req.Body = http.NoBody
+				req.ContentLength = 0
+				req.Header.Del("Content-Type")
+				req.Header.Del("Content-Length")
 			}
 		}
 	}
