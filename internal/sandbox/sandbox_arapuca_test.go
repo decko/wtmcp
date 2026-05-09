@@ -100,21 +100,16 @@ func TestBuildProfileSessionDir(t *testing.T) {
 func TestBuildProfileOutputDir(t *testing.T) {
 	m := &Manager{base: base{cfg: testConfig(), dataDir: "/data"}}
 
-	t.Run("output in read not write", func(t *testing.T) {
+	t.Run("output excluded from profile", func(t *testing.T) {
 		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler", OutputDir: "/home/user/project/wtmcp/test"}
 		profile := m.buildProfile(info)
 		if len(profile.WritePaths) != 2 {
-			t.Fatalf("WritePaths = %v, want 2 entries (tmp + data only, output moved to read)", profile.WritePaths)
+			t.Fatalf("WritePaths = %v, want 2 entries (tmp + data only)", profile.WritePaths)
 		}
-		found := false
 		for _, p := range profile.ReadPaths {
 			if p == "/home/user/project/wtmcp/test" {
-				found = true
-				break
+				t.Error("outputDir should NOT be in ReadPaths — all I/O goes through core")
 			}
-		}
-		if !found {
-			t.Errorf("ReadPaths should contain outputDir, got %v", profile.ReadPaths)
 		}
 	})
 

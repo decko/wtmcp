@@ -77,12 +77,9 @@ func (m *Manager) buildProfile(info PluginInfo) arapuca.Profile {
 		read = append(read, info.SessionDir)
 	}
 
-	// OutputDir is read-only for plugins — all writes go through the
-	// core's file I/O service (HandleFileIO). Plugins can still stat
-	// and read files in their output directory.
-	if info.OutputDir != "" {
-		read = append(read, info.OutputDir)
-	}
+	// OutputDir is not in the sandbox profile — all file I/O
+	// (reads and writes) goes through the core's HandleFileIO.
+	// The core creates outputDir lazily on first write.
 
 	tmpDir := m.TmpDir(info.Name)
 	dataDir := m.DataDir(info.Name)
