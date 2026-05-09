@@ -863,6 +863,9 @@ func RegisterPluginResources(srv *mcpserver.MCPServer, mgr *plugin.Manager, coll
 func registerHandleResources(srv *mcpserver.MCPServer, pluginName string, handle *plugin.Handle, collector *stats.Collector) {
 	for _, res := range handle.InitialResources() {
 		uri := res.URI
+		if !isValidResourceURI(uri, pluginName) {
+			log.Printf("WARNING: [%s] resource URI %q does not use wtmcp://%s/ prefix", pluginName, uri, pluginName)
+		}
 		mimeType := res.MIMEType
 		if mimeType == "" {
 			mimeType = "text/plain"
@@ -890,6 +893,14 @@ func registerHandleResources(srv *mcpserver.MCPServer, pluginName string, handle
 			},
 		)
 	}
+}
+
+// isValidResourceURI checks whether a plugin-provided resource URI
+// uses the expected namespace prefix. Currently warning-only; will
+// be enforced in a future release.
+func isValidResourceURI(uri, pluginName string) bool {
+	return strings.HasPrefix(uri, "wtmcp://plugin/"+pluginName+"/") ||
+		strings.HasPrefix(uri, "wtmcp://"+pluginName+"/")
 }
 
 // maxElicitParamLen is the maximum byte length for tool parameters
