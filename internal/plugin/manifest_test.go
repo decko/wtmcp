@@ -682,6 +682,70 @@ func TestToolDefAccess(t *testing.T) {
 	}
 }
 
+func TestManifestValidateConcurrencyMixedAccess(t *testing.T) {
+	base := func(concurrency int, access1, access2 string) *Manifest {
+		return &Manifest{
+			Name:        "test",
+			Handler:     "handler",
+			Execution:   "persistent",
+			Concurrency: concurrency,
+			Dir:         t.TempDir(),
+			Tools: []ToolDef{
+				{Name: "tool_a", Description: "d", Access: access1},
+				{Name: "tool_b", Description: "d", Access: access2},
+			},
+		}
+	}
+
+	if err := base(2, "read", "write").Validate(); err == nil {
+		t.Error("concurrency=2 with mixed access should fail")
+	} else if !strings.Contains(err.Error(), "same access level") {
+		t.Errorf("wrong error: %v", err)
+	}
+
+	if err := base(2, "read", "read").Validate(); err != nil {
+		t.Errorf("concurrency=2 with uniform read should pass: %v", err)
+	}
+
+	if err := base(2, "write", "write").Validate(); err != nil {
+		t.Errorf("concurrency=2 with uniform write should pass: %v", err)
+	}
+
+	if err := base(1, "read", "write").Validate(); err != nil {
+		t.Errorf("concurrency=1 with mixed access should pass: %v", err)
+	}
+}
+
+func TestManifestValidateConcurrencyMixedLocalWrite(t *testing.T) {
+	base := func(lw1, lw2 bool) *Manifest {
+		return &Manifest{
+			Name:        "test",
+			Handler:     "handler",
+			Execution:   "persistent",
+			Concurrency: 2,
+			Dir:         t.TempDir(),
+			Tools: []ToolDef{
+				{Name: "tool_a", Description: "d", Access: "read", LocalWrite: lw1},
+				{Name: "tool_b", Description: "d", Access: "read", LocalWrite: lw2},
+			},
+		}
+	}
+
+	if err := base(true, false).Validate(); err == nil {
+		t.Error("concurrency=2 with mixed local_write should fail")
+	} else if !strings.Contains(err.Error(), "same local_write") {
+		t.Errorf("wrong error: %v", err)
+	}
+
+	if err := base(true, true).Validate(); err != nil {
+		t.Errorf("concurrency=2 with uniform local_write=true should pass: %v", err)
+	}
+
+	if err := base(false, false).Validate(); err != nil {
+		t.Errorf("concurrency=2 with uniform local_write=false should pass: %v", err)
+	}
+}
+
 func TestToolDefVisibility(t *testing.T) {
 	primary := ToolDef{Name: "search", Visibility: "primary"}
 	if !primary.IsPrimary() {

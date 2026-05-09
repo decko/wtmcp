@@ -353,7 +353,7 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 	if method == "" {
 		method = http.MethodGet
 	}
-	if access := toolAccessFromContext(ctx); access == "read" && !isReadOnlyMethod(method) {
+	if access := ToolAccessFromContext(ctx); access == "read" && !isReadOnlyMethod(method) {
 		return errResponse(req.ID, "method_not_allowed",
 			fmt.Sprintf("read-only tool cannot use %s method", method))
 	}

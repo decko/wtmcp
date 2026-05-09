@@ -418,6 +418,21 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
+	// Concurrent plugins share a single tool-call context pointer per
+	// transport, so the access level from one tool call can leak into
+	// another. Reject mixed access levels when concurrency > 1.
+	if m.Concurrency > 1 && len(m.Tools) > 1 {
+		first := m.Tools[0]
+		for _, tool := range m.Tools[1:] {
+			if tool.Access != first.Access {
+				return fmt.Errorf("concurrency > 1 requires all tools to have the same access level")
+			}
+			if tool.LocalWrite != first.LocalWrite {
+				return fmt.Errorf("concurrency > 1 requires all tools to have the same local_write setting")
+			}
+		}
+	}
+
 	return nil
 }
 

@@ -14,7 +14,9 @@ func WithToolAccess(ctx context.Context, access string) context.Context {
 	return context.WithValue(ctx, toolAccessKey{}, access)
 }
 
-func toolAccessFromContext(ctx context.Context) string {
+// ToolAccessFromContext extracts the tool's access level from context.
+// Returns "" if no access level was set (e.g., during plugin init).
+func ToolAccessFromContext(ctx context.Context) string {
 	if v, ok := ctx.Value(toolAccessKey{}).(string); ok {
 		return v
 	}

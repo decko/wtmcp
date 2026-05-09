@@ -145,8 +145,32 @@ func (t *Transport) ReadLoop(pluginName string, concurrency int, serviceHandler 
 				}(ctx, msg)
 			}
 
-		case protocol.TypeCacheGet, protocol.TypeCacheSet, protocol.TypeCacheDel, protocol.TypeCacheList, protocol.TypeCacheFlush:
+		case protocol.TypeCacheGet, protocol.TypeCacheList:
 			ctx := t.ToolContext()
+			if concurrency <= 1 {
+				resp := serviceHandler.HandleCache(ctx, pluginName, msg)
+				if err := t.Send(resp); err != nil {
+					log.Printf("[%s] failed to send cache response: %v", pluginName, err)
+				}
+			} else {
+				go func(c context.Context, m protocol.Message) {
+					resp := serviceHandler.HandleCache(c, pluginName, m)
+					if err := t.Send(resp); err != nil {
+						log.Printf("[%s] failed to send cache response: %v", pluginName, err)
+					}
+				}(ctx, msg)
+			}
+
+		case protocol.TypeCacheSet, protocol.TypeCacheDel, protocol.TypeCacheFlush:
+			ctxPtr := t.toolCtx.Load()
+			if ctxPtr == nil {
+				resp := transportCacheError(msg.ID, msg.Type, "cache writes not allowed outside tool calls")
+				if err := t.Send(resp); err != nil {
+					log.Printf("[%s] failed to send cache error: %v", pluginName, err)
+				}
+				continue
+			}
+			ctx := *ctxPtr
 			if concurrency <= 1 {
 				resp := serviceHandler.HandleCache(ctx, pluginName, msg)
 				if err := t.Send(resp); err != nil {
@@ -242,6 +266,16 @@ func fileIOError(id, reqType, msg string) protocol.Message {
 		ID:    id,
 		Type:  respType,
 		Error: &protocol.Error{Code: "fileio_error", Message: msg},
+	}
+}
+
+// transportCacheError returns an error response for cache operations
+// rejected at the transport layer (e.g., outside a tool call).
+func transportCacheError(id, msgType, msg string) protocol.Message {
+	return protocol.Message{
+		ID:    id,
+		Type:  msgType,
+		Error: &protocol.Error{Code: "cache_error", Message: msg},
 	}
 }
 

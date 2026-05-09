@@ -534,3 +534,129 @@ func TestFileIOErrorTypeMapping(t *testing.T) {
 		t.Errorf("error code = %q, want %q", resp.Error.Code, "fileio_error")
 	}
 }
+
+func TestReadLoopRejectsCacheWritesWithoutToolContext(t *testing.T) {
+	cacheSet := protocol.Message{ID: "cs-1", Type: protocol.TypeCacheSet, Key: "k", Value: json.RawMessage(`"v"`)}
+	toolResult := protocol.Message{ID: "req-1", Type: protocol.TypeToolResult, Result: json.RawMessage(`{}`)}
+
+	var lines []string
+	for _, msg := range []protocol.Message{cacheSet, toolResult} {
+		data, _ := json.Marshal(msg)
+		lines = append(lines, string(data))
+	}
+	pluginStdout := strings.NewReader(strings.Join(lines, "\n") + "\n")
+
+	var pluginStdin bytes.Buffer
+	tr := NewTransport(&pluginStdin, pluginStdout, strings.NewReader(""), 1024*1024)
+
+	cacheCalled := false
+	handler := &mockServiceHandler{
+		cacheHandler: func(_ context.Context, _ string, _ protocol.Message) protocol.Message {
+			cacheCalled = true
+			return protocol.Message{}
+		},
+	}
+
+	ch := make(chan protocol.Message, 1)
+	tr.pending.Store("req-1", ch)
+
+	go tr.ReadLoop("test-plugin", 1, handler)
+
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tool_result")
+	}
+
+	if cacheCalled {
+		t.Error("HandleCache should NOT have been called for cache_set without tool context")
+	}
+	output := pluginStdin.String()
+	if !strings.Contains(output, `"cache_error"`) {
+		t.Error("error response should contain cache_error code")
+	}
+	if !strings.Contains(output, "not allowed outside tool calls") {
+		t.Error("error should mention 'not allowed outside tool calls'")
+	}
+}
+
+func TestReadLoopAllowsCacheGetWithoutToolContext(t *testing.T) {
+	cacheGet := protocol.Message{ID: "cg-1", Type: protocol.TypeCacheGet, Key: "k"}
+	toolResult := protocol.Message{ID: "req-1", Type: protocol.TypeToolResult, Result: json.RawMessage(`{}`)}
+
+	var lines []string
+	for _, msg := range []protocol.Message{cacheGet, toolResult} {
+		data, _ := json.Marshal(msg)
+		lines = append(lines, string(data))
+	}
+	pluginStdout := strings.NewReader(strings.Join(lines, "\n") + "\n")
+
+	var pluginStdin bytes.Buffer
+	tr := NewTransport(&pluginStdin, pluginStdout, strings.NewReader(""), 1024*1024)
+
+	cacheCalled := false
+	handler := &mockServiceHandler{
+		cacheHandler: func(_ context.Context, _ string, _ protocol.Message) protocol.Message {
+			cacheCalled = true
+			h := true
+			return protocol.Message{ID: "cg-1", Type: protocol.TypeCacheGet, Hit: &h}
+		},
+	}
+
+	ch := make(chan protocol.Message, 1)
+	tr.pending.Store("req-1", ch)
+
+	go tr.ReadLoop("test-plugin", 1, handler)
+
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for tool_result")
+	}
+
+	if !cacheCalled {
+		t.Error("HandleCache should have been called for cache_get without tool context")
+	}
+}
+
+func TestReadLoopRejectsCacheDelFlushWithoutToolContext(t *testing.T) {
+	for _, msgType := range []string{protocol.TypeCacheDel, protocol.TypeCacheFlush} {
+		t.Run(msgType, func(t *testing.T) {
+			cacheMsg := protocol.Message{ID: "cm-1", Type: msgType, Key: "k"}
+			toolResult := protocol.Message{ID: "req-1", Type: protocol.TypeToolResult, Result: json.RawMessage(`{}`)}
+
+			var lines []string
+			for _, msg := range []protocol.Message{cacheMsg, toolResult} {
+				data, _ := json.Marshal(msg)
+				lines = append(lines, string(data))
+			}
+			pluginStdout := strings.NewReader(strings.Join(lines, "\n") + "\n")
+
+			var pluginStdin bytes.Buffer
+			tr := NewTransport(&pluginStdin, pluginStdout, strings.NewReader(""), 1024*1024)
+
+			cacheCalled := false
+			handler := &mockServiceHandler{
+				cacheHandler: func(_ context.Context, _ string, _ protocol.Message) protocol.Message {
+					cacheCalled = true
+					return protocol.Message{}
+				},
+			}
+
+			ch := make(chan protocol.Message, 1)
+			tr.pending.Store("req-1", ch)
+
+			go tr.ReadLoop("test-plugin", 1, handler)
+
+			select {
+			case <-ch:
+			case <-time.After(2 * time.Second):
+				t.Fatal("timeout waiting for tool_result")
+			}
+
+			if cacheCalled {
+				t.Errorf("HandleCache should NOT have been called for %s without tool context", msgType)
+			}
+		})
+	}
+}

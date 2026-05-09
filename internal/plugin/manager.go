@@ -1603,6 +1603,9 @@ func (s *serviceHandlerImpl) HandleCache(ctx context.Context, pluginName string,
 		return resp
 
 	case protocol.TypeCacheSet:
+		if access := proxy.ToolAccessFromContext(ctx); access == "read" {
+			return cacheError(req.ID, req.Type, fmt.Errorf("read-only tool cannot modify cache"))
+		}
 		if err := cache.ValidateKey(req.Key); err != nil {
 			return cacheError(req.ID, req.Type, err)
 		}
@@ -1619,6 +1622,9 @@ func (s *serviceHandlerImpl) HandleCache(ctx context.Context, pluginName string,
 		return resp
 
 	case protocol.TypeCacheDel:
+		if access := proxy.ToolAccessFromContext(ctx); access == "read" {
+			return cacheError(req.ID, req.Type, fmt.Errorf("read-only tool cannot modify cache"))
+		}
 		if err := cache.ValidateKey(req.Key); err != nil {
 			return cacheError(req.ID, req.Type, err)
 		}
@@ -1637,6 +1643,9 @@ func (s *serviceHandlerImpl) HandleCache(ctx context.Context, pluginName string,
 		return protocol.Message{ID: req.ID, Type: protocol.TypeCacheList, Keys: keys}
 
 	case protocol.TypeCacheFlush:
+		if access := proxy.ToolAccessFromContext(ctx); access == "read" {
+			return cacheError(req.ID, req.Type, fmt.Errorf("read-only tool cannot modify cache"))
+		}
 		count, err := s.cache.Flush(ctx, namespace)
 		if err != nil {
 			return cacheError(req.ID, req.Type, err)
@@ -1653,7 +1662,7 @@ func (s *serviceHandlerImpl) HandleCache(ctx context.Context, pluginName string,
 	}
 }
 
-func (s *serviceHandlerImpl) HandleFileIO(_ context.Context, pluginName string, req protocol.Message) protocol.Message {
+func (s *serviceHandlerImpl) HandleFileIO(ctx context.Context, pluginName string, req protocol.Message) protocol.Message {
 	v, ok := s.dirs.Load(pluginName)
 	if !ok {
 		return fileIOError(req.ID, req.Type, "plugin not configured for file I/O")
@@ -1662,6 +1671,9 @@ func (s *serviceHandlerImpl) HandleFileIO(_ context.Context, pluginName string, 
 
 	switch req.Type {
 	case protocol.TypeFileWrite:
+		if access := proxy.ToolAccessFromContext(ctx); access == "read" {
+			return fileIOError(req.ID, req.Type, "read-only tool cannot write files")
+		}
 		writeReq := fileio.WriteRequest{
 			Path:        req.Path,
 			Content:     req.Content,
