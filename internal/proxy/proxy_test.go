@@ -734,29 +734,86 @@ func TestStripAuthOnCrossDomainRedirect(t *testing.T) {
 		return u
 	}
 
-	t.Run("cross domain strips auth headers", func(t *testing.T) {
+	t.Run("cross domain strips auth and custom headers", func(t *testing.T) {
 		via := []*http.Request{{URL: mustParse("https://a.example.com/path")}}
 		req := &http.Request{
 			URL: mustParse("https://b.example.com/other"),
 			Header: http.Header{
-				"Authorization": {"Bearer tok"},
-				"Cookie":        {"session=abc"},
-				"Private-Token": {"glpat-xxx"},
-				"X-Api-Key":     {"key-123"},
+				"Authorization":   {"Bearer tok"},
+				"Cookie":          {"session=abc"},
+				"Private-Token":   {"glpat-xxx"},
+				"X-Api-Key":       {"key-123"},
+				"X-Internal-Auth": {"custom-secret"},
+				"X-Request-Id":    {"trace-123"},
 			},
 		}
 		if err := StripAuthOnCrossDomainRedirect(req, via); err != nil {
 			t.Fatal(err)
 		}
-		for _, h := range []string{"Authorization", "Cookie", "Private-Token", "X-Api-Key"} {
+		stripped := []string{
+			"Authorization", "Cookie", "Private-Token",
+			"X-Api-Key", "X-Internal-Auth", "X-Request-Id",
+		}
+		for _, h := range stripped {
 			if req.Header.Get(h) != "" {
 				t.Errorf("header %s should be stripped on cross-domain redirect", h)
 			}
 		}
 	})
 
-	t.Run("same domain preserves headers", func(t *testing.T) {
+	t.Run("cross domain preserves safe headers", func(t *testing.T) {
+		via := []*http.Request{{URL: mustParse("https://a.example.com/path")}}
+		req := &http.Request{
+			URL: mustParse("https://b.example.com/other"),
+			Header: http.Header{
+				"Accept":          {"application/json"},
+				"Content-Type":    {"application/json"},
+				"User-Agent":      {"wtmcp/1.0"},
+				"Range":           {"bytes=0-100"},
+				"If-None-Match":   {`"etag123"`},
+				"Authorization":   {"Bearer tok"},
+				"X-Custom-Secret": {"should-be-stripped"},
+			},
+		}
+		if err := StripAuthOnCrossDomainRedirect(req, via); err != nil {
+			t.Fatal(err)
+		}
+		preserved := []string{"Accept", "User-Agent", "Range", "If-None-Match"}
+		for _, h := range preserved {
+			if req.Header.Get(h) == "" {
+				t.Errorf("safe header %s should be preserved on cross-domain redirect", h)
+			}
+		}
+		if req.Header.Get("Authorization") != "" {
+			t.Error("Authorization should be stripped")
+		}
+		if req.Header.Get("X-Custom-Secret") != "" {
+			t.Error("custom header should be stripped")
+		}
+	})
+
+	t.Run("same domain preserves all headers", func(t *testing.T) {
 		via := []*http.Request{{URL: mustParse("https://api.example.com/a")}}
+		req := &http.Request{
+			URL: mustParse("https://api.example.com/b"),
+			Header: http.Header{
+				"Authorization":   {"Bearer tok"},
+				"X-Internal-Auth": {"custom-secret"},
+				"X-Request-Id":    {"trace-123"},
+			},
+		}
+		if err := StripAuthOnCrossDomainRedirect(req, via); err != nil {
+			t.Fatal(err)
+		}
+		for _, h := range []string{"Authorization", "X-Internal-Auth", "X-Request-Id"} {
+			if req.Header.Get(h) == "" {
+				t.Errorf("header %s should be preserved on same-domain redirect", h)
+			}
+		}
+	})
+
+	t.Run("case insensitive domain comparison", func(t *testing.T) {
+		via := []*http.Request{{URL: mustParse("https://API.EXAMPLE.COM/a")}}
 		req := &http.Request{
 			URL: mustParse("https://api.example.com/b"),
 			Header: http.Header{
@@ -767,7 +824,7 @@ func TestStripAuthOnCrossDomainRedirect(t *testing.T) {
 			t.Fatal(err)
 		}
 		if req.Header.Get("Authorization") == "" {
-			t.Error("header should be preserved on same-domain redirect")
+			t.Error("same domain (case-insensitive) should preserve headers")
 		}
 	})
 

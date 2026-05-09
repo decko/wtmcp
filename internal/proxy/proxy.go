@@ -732,10 +732,31 @@ func errResponse(id, code, message string) protocol.Message {
 	}
 }
 
+// safeRedirectHeaders are headers preserved on cross-domain redirects.
+// All other headers are stripped to prevent credential leakage via
+// custom auth headers (e.g., X-Internal-Token from BearerProvider).
+// This matches browser same-origin redirect policy.
+//
+// Kerberos plugins have a per-plugin cookie jar that re-adds cookies
+// at the transport level (not via header copying), so stripping
+// Cookie here does not break SPNEGO auth flows.
+var safeRedirectHeaders = map[string]bool{
+	"Accept":            true,
+	"Accept-Language":   true,
+	"Accept-Encoding":   true,
+	"User-Agent":        true,
+	"Cache-Control":     true,
+	"If-None-Match":     true,
+	"If-Modified-Since": true,
+	"Range":             true,
+	"If-Range":          true,
+}
+
 // StripAuthOnCrossDomainRedirect is a CheckRedirect function that
-// strips sensitive auth headers when a redirect crosses domain
+// strips all non-safe headers when a redirect crosses domain
 // boundaries. This prevents credential leakage if a plugin's target
-// server redirects to an attacker-controlled domain.
+// server redirects to an attacker-controlled domain, including
+// custom auth headers that the previous hardcoded strip list missed.
 func StripAuthOnCrossDomainRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
 		return fmt.Errorf("stopped after 10 redirects")
@@ -743,16 +764,18 @@ func StripAuthOnCrossDomainRedirect(req *http.Request, via []*http.Request) erro
 	if len(via) > 0 {
 		origHost := via[0].URL.Hostname()
 		newHost := req.URL.Hostname()
+		schemeDowngrade := via[0].URL.Scheme == "https" && req.URL.Scheme == "http"
 		origNorm, err1 := domaincheck.Normalize(origHost)
 		newNorm, err2 := domaincheck.Normalize(newHost)
-		if err1 != nil || err2 != nil || origNorm != newNorm {
+		if err1 != nil || err2 != nil || origNorm != newNorm || schemeDowngrade {
 			if err1 != nil || err2 != nil {
 				log.Printf("proxy: stripping auth headers on redirect: hostname normalization failed") //nolint:gosec // no user data in this message
 			}
-			req.Header.Del("Authorization")
-			req.Header.Del("Cookie")
-			req.Header.Del("Private-Token")
-			req.Header.Del("X-Api-Key")
+			for h := range req.Header {
+				if !safeRedirectHeaders[http.CanonicalHeaderKey(h)] {
+					req.Header.Del(h)
+				}
+			}
 		}
 	}
 	return nil
