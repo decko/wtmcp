@@ -647,20 +647,21 @@ func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Man
 		return err
 	}
 
-	// Remove old tools, context resources, and provided resources.
-	// Purge collision map entries so the plugin can re-register
-	// its own tools without self-collision.
-	if len(oldToolNames) > 0 {
-		srv.DeleteTools(oldToolNames...)
-	}
-	if toolOwners != nil {
-		toolOwners.removePlugin(name)
-	}
+	// Remove old context and provided resources.
 	if len(oldContextURIs) > 0 {
 		srv.DeleteResources(oldContextURIs...)
 	}
 	if len(oldResourceURIs) > 0 {
 		srv.DeleteResources(oldResourceURIs...)
+	}
+
+	// Register new tools FIRST — AddTool atomically replaces the
+	// handler for existing names, eliminating the "tool not found"
+	// window that existed when we deleted before re-registering.
+	// Purge the ownership map before registering so the plugin
+	// can re-register its own tools without self-collision.
+	if toolOwners != nil {
+		toolOwners.removePlugin(name)
 	}
 
 	// Re-register tools. Check disabled first — a plugin can be in
@@ -677,6 +678,29 @@ func ReloadPlugin(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Man
 				registerHandleResources(srv, name, handle, collector)
 			}
 		}
+	}
+
+	// Delete tool names that existed in the old manifest but not the
+	// new one. Tools that still exist were already replaced in-place
+	// by AddTool above. Collect new tool names from the current state.
+	newToolNames := make(map[string]bool)
+	if manifest, ok := mgr.Manifests()[name]; ok {
+		for _, t := range manifest.Tools {
+			newToolNames[t.Name] = true
+		}
+	} else if dp, ok := mgr.DisabledPlugins()[name]; ok {
+		for _, t := range dp.Manifest.Tools {
+			newToolNames[t.Name] = true
+		}
+	}
+	var removedTools []string
+	for _, oldName := range oldToolNames {
+		if !newToolNames[oldName] {
+			removedTools = append(removedTools, oldName)
+		}
+	}
+	if len(removedTools) > 0 {
+		srv.DeleteTools(removedTools...)
 	}
 
 	// Rebuild tool index and re-register tool_search so the
