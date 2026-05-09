@@ -668,6 +668,63 @@ func TestCheckIPMulticast(t *testing.T) {
 	}
 }
 
+func TestCheckIPCGNAT(t *testing.T) {
+	blocked := []string{
+		"100.64.0.1",      // first usable in CGNAT range
+		"100.127.255.254", // last usable in CGNAT range
+		"100.100.100.100", // common cloud metadata
+	}
+	for _, ip := range blocked {
+		if err := checkIP(ip); err == nil {
+			t.Errorf("checkIP(%q) = nil, want CGNAT blocked", ip)
+		}
+	}
+
+	allowed := []string{
+		"100.63.255.255", // just below CGNAT range
+		"100.128.0.0",    // just above CGNAT range
+	}
+	for _, ip := range allowed {
+		if err := checkIP(ip); err != nil {
+			t.Errorf("checkIP(%q) = %v, want nil", ip, err)
+		}
+	}
+}
+
+func TestCheckIPBenchmark(t *testing.T) {
+	blocked := []string{
+		"198.18.0.1",     // first usable in benchmark range
+		"198.19.255.254", // last usable in benchmark range
+	}
+	for _, ip := range blocked {
+		if err := checkIP(ip); err == nil {
+			t.Errorf("checkIP(%q) = nil, want benchmark blocked", ip)
+		}
+	}
+
+	allowed := []string{
+		"198.17.255.255", // just below benchmark range
+		"198.20.0.0",     // just above benchmark range
+	}
+	for _, ip := range allowed {
+		if err := checkIP(ip); err != nil {
+			t.Errorf("checkIP(%q) = %v, want nil", ip, err)
+		}
+	}
+}
+
+func TestCheckIPv6MappedCGNAT(t *testing.T) {
+	blocked := []string{
+		"::ffff:100.64.0.1",
+		"::ffff:198.18.0.1",
+	}
+	for _, ip := range blocked {
+		if err := checkIP(ip); err == nil {
+			t.Errorf("checkIP(%q) = nil, want reserved blocked", ip)
+		}
+	}
+}
+
 func TestStripAuthOnCrossDomainRedirect(t *testing.T) {
 	mustParse := func(raw string) *url.URL {
 		u, err := url.Parse(raw)

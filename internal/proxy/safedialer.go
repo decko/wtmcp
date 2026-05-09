@@ -53,8 +53,24 @@ func (d *safeDialer) DialContext(ctx context.Context, network, addr string) (net
 	return nil, fmt.Errorf("connect to %s: %w", addr, lastErr)
 }
 
-// checkIP rejects private, loopback, link-local, and unspecified
-// addresses, including IPv6-mapped IPv4 representations.
+// Reserved IP ranges not covered by Go's net.IP methods.
+var (
+	cgnatNet     = mustParseCIDR("100.64.0.0/10") // RFC 6598: shared/CGNAT
+	benchmarkNet = mustParseCIDR("198.18.0.0/15") // RFC 2544: benchmarking
+	sixToFourNet = mustParseCIDR("2002::/16")     // RFC 3056: 6to4 (deprecated by RFC 7526)
+	teredoNet    = mustParseCIDR("2001::/32")     // RFC 4380: Teredo tunneling
+)
+
+func mustParseCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic("invalid CIDR: " + s)
+	}
+	return n
+}
+
+// checkIP rejects private, loopback, link-local, unspecified,
+// CGNAT, and benchmarking addresses, including IPv6-mapped IPv4.
 func checkIP(ipStr string) error {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
@@ -66,6 +82,11 @@ func checkIP(ipStr string) error {
 		return fmt.Errorf("resolves to private/loopback address %s", ipStr)
 	}
 
+	if cgnatNet.Contains(ip) || benchmarkNet.Contains(ip) ||
+		sixToFourNet.Contains(ip) || teredoNet.Contains(ip) {
+		return fmt.Errorf("resolves to reserved address %s", ipStr)
+	}
+
 	// IPv6-mapped IPv4 (::ffff:x.x.x.x): Go's IsPrivate only checks
 	// IPv4 ranges against 4-byte IPs. A 16-byte representation like
 	// ::ffff:10.0.0.1 would slip through the check above.
@@ -73,6 +94,9 @@ func checkIP(ipStr string) error {
 		if ipv4.IsLoopback() || ipv4.IsPrivate() || ipv4.IsLinkLocalUnicast() ||
 			ipv4.IsMulticast() || ipv4.IsUnspecified() {
 			return fmt.Errorf("resolves to private/loopback address %s", ipStr)
+		}
+		if cgnatNet.Contains(ipv4) || benchmarkNet.Contains(ipv4) {
+			return fmt.Errorf("resolves to reserved address %s", ipStr)
 		}
 	}
 
