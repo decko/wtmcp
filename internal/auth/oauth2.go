@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LeGambiArt/wtmcp/internal/config"
 	"golang.org/x/oauth2"
 )
 
@@ -146,7 +147,18 @@ type tokenJSON struct {
 }
 
 func loadToken(path string) (*oauth2.Token, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // credential file path from config
+	if err := config.RejectSymlink(path); err != nil {
+		return nil, fmt.Errorf("token file: %w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := config.CheckPermissions(path, info); err != nil {
+		return nil, fmt.Errorf("token file: %w", err)
+	}
+
+	data, err := os.ReadFile(path) //nolint:gosec // path validated above
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +211,29 @@ func saveToken(path string, tok *oauth2.Token) error {
 		return fmt.Errorf("create token dir: %w", err)
 	}
 
-	return os.WriteFile(path, data, 0o600) //nolint:gosec
+	f, err := os.CreateTemp(dir, ".wtmcp-token-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp token: %w", err)
+	}
+	defer os.Remove(f.Name()) //nolint:errcheck // cleanup on failure; harmless ENOENT after rename
+
+	if err := f.Chmod(0o600); err != nil {
+		f.Close() //nolint:errcheck,gosec
+		return fmt.Errorf("chmod temp token: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close() //nolint:errcheck,gosec
+		return fmt.Errorf("write temp token: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close() //nolint:errcheck,gosec
+		return fmt.Errorf("fsync temp token: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close temp token: %w", err)
+	}
+
+	return os.Rename(f.Name(), path) //nolint:gosec // G703: path validated by resolveCredentialPath
 }
 
 // credentialsJSON represents the Google OAuth2 client credentials file.
