@@ -49,10 +49,11 @@ func (b *base) DataDir(pluginName string) string {
 	return filepath.Join(b.dataDir, pluginName)
 }
 
-// PrepareDirs creates the per-plugin tmpdir, datadir, and outputDir
-// with 0700 permissions. The outputDir is created only if set on
-// info. Landlock needs directories to exist to create path_beneath
-// rules. Safe to call multiple times.
+// PrepareDirs creates the per-plugin tmpdir and datadir with 0700
+// permissions. Landlock needs these directories to exist for
+// path_beneath rules. OutputDir is NOT created here — it is
+// created lazily by the core's file I/O service on first write.
+// Safe to call multiple times.
 func (b *base) PrepareDirs(info PluginInfo) (tmpDir, dataDir string, err error) {
 	tmpDir = b.TmpDir(info.Name)
 	dataDir = b.DataDir(info.Name)
@@ -62,11 +63,6 @@ func (b *base) PrepareDirs(info PluginInfo) (tmpDir, dataDir string, err error) 
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("create datadir: %w", err)
-	}
-	if info.OutputDir != "" {
-		if err := os.MkdirAll(info.OutputDir, 0o700); err != nil {
-			return "", "", fmt.Errorf("create output dir: %w", err)
-		}
 	}
 	return tmpDir, dataDir, nil
 }

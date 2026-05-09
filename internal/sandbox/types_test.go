@@ -57,12 +57,10 @@ func TestPrepareDirsOutputDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(outDir); os.IsNotExist(err) {
-		t.Errorf("outputDir not created: %s", outDir)
-	}
-	info, _ := os.Stat(outDir)
-	if perm := info.Mode().Perm(); perm != 0o700 {
-		t.Errorf("outputDir permissions = %o, want 0700", perm)
+	// outputDir should NOT be created by PrepareDirs — lazy creation
+	// happens in the core's file I/O service on first write.
+	if _, err := os.Stat(outDir); !os.IsNotExist(err) {
+		t.Errorf("outputDir should NOT be created by PrepareDirs: %s", outDir)
 	}
 }
 
