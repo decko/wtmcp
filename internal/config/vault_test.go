@@ -12,7 +12,7 @@ func TestResolveVaultPassword_EnvVar(t *testing.T) {
 	t.Setenv("WTMCP_VAULT_PASSWORD", "env-password")
 
 	cfg := DefaultConfig()
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	password, err := resolve("")
 	if err != nil {
@@ -41,7 +41,7 @@ func TestResolveVaultPassword_EmptyEnvVar(t *testing.T) {
 	t.Setenv("WTMCP_VAULT_PASSWORD", "")
 
 	cfg := DefaultConfig()
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	_, err := resolve("")
 	if err == nil {
@@ -61,7 +61,7 @@ func TestResolveVaultPassword_File(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Secrets.VaultPasswordFile = passFile
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	password, err := resolve("")
 	if err != nil {
@@ -81,7 +81,7 @@ func TestResolveVaultPassword_FileNoNewline(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Secrets.VaultPasswordFile = passFile
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	password, err := resolve("")
 	if err != nil {
@@ -101,7 +101,7 @@ func TestResolveVaultPassword_FileEmpty(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Secrets.VaultPasswordFile = passFile
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	_, err := resolve("")
 	if err == nil {
@@ -121,7 +121,7 @@ func TestResolveVaultPassword_FileBadPerms(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Secrets.VaultPasswordFile = passFile
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	_, err := resolve("")
 	if err == nil {
@@ -145,7 +145,7 @@ func TestResolveVaultPassword_FileSymlink(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Secrets.VaultPasswordFile = symlink
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	_, err := resolve("")
 	if err == nil {
@@ -172,7 +172,7 @@ func TestResolveVaultPassword_VaultID(t *testing.T) {
 		"prod": prodFile,
 		"dev":  devFile,
 	}
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	prod, err := resolve("prod")
 	if err != nil {
@@ -195,7 +195,7 @@ func TestResolveVaultPassword_VaultIDEnvVar(t *testing.T) {
 	t.Setenv("WTMCP_VAULT_PASSWORD_PROD", "prod-env-password")
 
 	cfg := DefaultConfig()
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	password, err := resolve("prod")
 	if err != nil {
@@ -214,7 +214,7 @@ func TestResolveVaultPassword_VaultIDFallsBackToDefault(t *testing.T) {
 	t.Setenv("WTMCP_VAULT_PASSWORD", "default-password")
 
 	cfg := DefaultConfig()
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	password, err := resolve("unknown-id")
 	if err != nil {
@@ -236,7 +236,7 @@ func TestResolveVaultPassword_EnvVarPrecedence(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Secrets.VaultPasswordFile = passFile
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	password, err := resolve("")
 	if err != nil {
@@ -249,7 +249,7 @@ func TestResolveVaultPassword_EnvVarPrecedence(t *testing.T) {
 
 func TestResolveVaultPassword_NoPasswordConfigured(t *testing.T) {
 	cfg := DefaultConfig()
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	_, err := resolve("")
 	if err == nil {
@@ -270,7 +270,7 @@ func TestResolveVaultPassword_PasswordFileEnvVar(t *testing.T) {
 	t.Setenv("WTMCP_VAULT_PASSWORD_FILE", passFile)
 
 	cfg := DefaultConfig()
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	password, err := resolve("")
 	if err != nil {
@@ -315,7 +315,7 @@ func TestResolveVaultPassword_Concurrent(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.Secrets.VaultPasswordFile = passFile
-	resolve := ResolveVaultPassword(cfg)
+	resolve, _ := ResolveVaultPassword(cfg)
 
 	const goroutines = 20
 	errs := make(chan error, goroutines)
@@ -358,5 +358,67 @@ func TestStripTrailingNewline(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("stripTrailingNewline(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestVaultPasswordCloser_BytesZeroed(t *testing.T) {
+	t.Setenv("WTMCP_VAULT_PASSWORD", "zerotest-secret")
+
+	cfg := DefaultConfig()
+	resolve, closer := ResolveVaultPassword(cfg)
+
+	_, err := resolve("")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	// Capture the underlying cache slice before Close.
+	closer.mu.Lock()
+	var captured []byte
+	for _, v := range closer.envCache {
+		captured = v
+	}
+	closer.mu.Unlock()
+
+	if len(captured) == 0 {
+		t.Fatal("cache should have an entry before Close")
+	}
+
+	_ = closer.Close()
+
+	for i, b := range captured {
+		if b != 0 {
+			t.Errorf("byte[%d] = 0x%02x after Close, want 0x00", i, b)
+		}
+	}
+
+	// Verify map is empty.
+	closer.mu.Lock()
+	n := len(closer.envCache)
+	closer.mu.Unlock()
+	if n != 0 {
+		t.Errorf("envCache should be empty after Close, got %d entries", n)
+	}
+}
+
+func TestVaultPasswordCloser_NilMu(t *testing.T) {
+	var c VaultPasswordCloser
+	if err := c.Close(); err != nil {
+		t.Errorf("Close on zero-value should return nil, got %v", err)
+	}
+}
+
+func TestVaultPasswordCloser_DoubleClose(t *testing.T) {
+	t.Setenv("WTMCP_VAULT_PASSWORD", "double-close-test")
+
+	cfg := DefaultConfig()
+	resolve, closer := ResolveVaultPassword(cfg)
+	_, _ = resolve("")
+
+	if err := closer.Close(); err != nil {
+		t.Errorf("first Close: %v", err)
+	}
+	if err := closer.Close(); err != nil {
+		t.Errorf("second Close: %v", err)
 	}
 }

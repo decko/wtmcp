@@ -187,7 +187,8 @@ func resolveVaultCLIPassword(confirmOnPrompt bool) ([]byte, error) {
 	}
 	cfg, err := config.Load("", workdir)
 	if err == nil && cfg.Secrets.VaultPasswordFile != "" {
-		resolve := config.ResolveVaultPassword(cfg)
+		resolve, vaultCloser := config.ResolveVaultPassword(cfg)
+		defer func() { _ = vaultCloser.Close() }()
 		password, err := resolve("")
 		if err == nil {
 			return password, nil

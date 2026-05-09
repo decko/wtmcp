@@ -26,6 +26,15 @@ type DiscoveryResult struct {
 	EnvDirError   string // env.d directory-level error, if any
 	Manager       *Manager
 	VaultResolver func(vaultID string) ([]byte, error)
+	VaultCloser   *config.VaultPasswordCloser
+}
+
+// Close releases resources held by the discovery result,
+// including zeroing cached vault passwords.
+func (r *DiscoveryResult) Close() {
+	if r.VaultCloser != nil {
+		_ = r.VaultCloser.Close()
+	}
 }
 
 // Discover performs plugin discovery without loading plugins.
@@ -52,7 +61,7 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 
 	// Load scoped env.d groups (not into process env)
 	envDir := config.ResolveEnvDir(cfg, workdir)
-	resolve := config.ResolveVaultPassword(cfg)
+	resolve, vaultCloser := config.ResolveVaultPassword(cfg)
 	envOpts := config.EnvLoadOptions{
 		VaultPassword: resolve,
 	}
@@ -98,5 +107,6 @@ func Discover(opts DiscoveryOptions) (*DiscoveryResult, error) {
 		EnvDirError:   envResult.DirError,
 		Manager:       mgr,
 		VaultResolver: resolve,
+		VaultCloser:   vaultCloser,
 	}, nil
 }

@@ -23,20 +23,45 @@ var vaultIDConfigPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 const maxVaultIDLen = 64
 
+// VaultPasswordCloser zeros cached vault passwords. Call during
+// shutdown for best-effort memory hygiene. Note: Go's GC may retain
+// copies from prior readEnvCached calls -- this is best-effort only.
+type VaultPasswordCloser struct {
+	mu       *sync.Mutex
+	envCache map[string][]byte
+}
+
+// Close zeros and deletes all cached vault password entries.
+func (c *VaultPasswordCloser) Close() error {
+	if c.mu == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, v := range c.envCache {
+		for i := range v {
+			v[i] = 0
+		}
+		delete(c.envCache, k)
+	}
+	return nil
+}
+
 // ResolveVaultPassword returns a closure that resolves vault
-// passwords by vault ID. The closure caches env var values on first
-// read and unsets them from the process environment. File-based
-// sources are re-read on each call to pick up rotations.
+// passwords by vault ID, and a closer that zeros the cache.
+// The closure caches env var values on first read and unsets them
+// from the process environment. File-based sources are re-read on
+// each call to pick up rotations.
 //
 // The returned closure is safe for concurrent use.
-func ResolveVaultPassword(cfg *Config) func(vaultID string) ([]byte, error) {
+func ResolveVaultPassword(cfg *Config) (func(vaultID string) ([]byte, error), *VaultPasswordCloser) {
 	var (
 		mu       sync.Mutex
 		envCache = make(map[string][]byte)
 		consumed = make(map[string]bool)
 	)
 
-	return func(vaultID string) ([]byte, error) {
+	resolver := func(vaultID string) ([]byte, error) {
 		mu.Lock()
 		defer mu.Unlock()
 
@@ -52,6 +77,9 @@ func ResolveVaultPassword(cfg *Config) func(vaultID string) ([]byte, error) {
 
 		return resolveDefaultPassword(cfg, envCache, consumed)
 	}
+
+	closer := &VaultPasswordCloser{mu: &mu, envCache: envCache}
+	return resolver, closer
 }
 
 // resolveNamedVaultID tries per-ID sources before falling back to

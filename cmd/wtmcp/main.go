@@ -153,8 +153,10 @@ func run() error {
 
 	// Load scoped env.d groups (not into process env)
 	envDir := config.ResolveEnvDir(cfg, wd)
+	vaultResolver, vaultCloser := config.ResolveVaultPassword(cfg)
+	defer func() { _ = vaultCloser.Close() }()
 	envOpts := config.EnvLoadOptions{
-		VaultPassword: config.ResolveVaultPassword(cfg),
+		VaultPassword: vaultResolver,
 	}
 	envResult, err := config.LoadEnvGroups(envDir, envOpts)
 	if err != nil {
