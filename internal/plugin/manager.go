@@ -1704,7 +1704,7 @@ func (s *serviceHandlerImpl) HandleFileIO(ctx context.Context, pluginName string
 		writeReq := fileio.WriteRequest{
 			Path:        req.Path,
 			Content:     req.Content,
-			HasContent:  req.Content != "" || (req.BodyEncoding != "" && req.SourcePath == ""),
+			HasContent:  req.HasContent,
 			SourcePath:  req.SourcePath,
 			Encoding:    req.BodyEncoding,
 			Permissions: req.Permissions,

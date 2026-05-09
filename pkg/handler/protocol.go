@@ -89,7 +89,7 @@ func (m Message) MarshalJSON() ([]byte, error) {
 	// Insert "content":"" into the JSON object. The standard marshal
 	// omitted it due to omitempty — we patch it back in.
 	// Find the closing '}' and insert before it.
-	if len(data) > 1 && data[len(data)-1] == '}' {
+	if len(data) > 2 && data[len(data)-1] == '}' {
 		insert := []byte(`,"content":""}`)
 		result := make([]byte, len(data)-1, len(data)-1+len(insert))
 		copy(result, data[:len(data)-1])

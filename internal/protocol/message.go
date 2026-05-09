@@ -3,6 +3,7 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -60,6 +61,7 @@ type Message struct {
 	Permissions string `json:"permissions,omitempty"`
 	Mkdir       *bool  `json:"mkdir,omitempty"`
 	Size        *int64 `json:"size,omitempty"`
+	HasContent  bool   `json:"-"` // true when "content" key is present in JSON
 
 	// cache fields
 	Key     string          `json:"key,omitempty"`
@@ -75,6 +77,47 @@ type Message struct {
 	// auth_request / auth_response fields
 	AuthConfig json.RawMessage `json:"auth_config,omitempty"`
 	Target     *AuthTarget     `json:"target,omitempty"`
+}
+
+// UnmarshalJSON detects whether the "content" key is present in the
+// JSON payload, setting HasContent accordingly. This distinguishes
+// {"content": ""} (write empty file) from absent content (use
+// source_path). The detection is a fast byte scan, not a second parse.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	type Alias Message
+	aux := (*Alias)(m)
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if m.Type == TypeFileWrite {
+		m.HasContent = hasJSONKey(data, "content")
+	}
+	return nil
+}
+
+// hasJSONKey checks if a top-level JSON object contains the given
+// key using a streaming decoder. Only reads keys, skipping values.
+func hasJSONKey(data []byte, key string) bool {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil || tok != json.Delim('{') {
+		return false
+	}
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		if k, ok := t.(string); ok && k == key {
+			return true
+		}
+		// Skip the value
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return false
+		}
+	}
+	return false
 }
 
 // AuthTarget describes the HTTP request that needs authentication.
