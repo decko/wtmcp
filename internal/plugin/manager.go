@@ -810,27 +810,13 @@ func (m *Manager) Reload(ctx context.Context, name string) error {
 	m.WaitLoaded()
 
 	// Serialize reloads: the control watcher and MCP dispatch can
-	// both trigger Reload concurrently.
+	// both trigger Reload concurrently. The reloadMu serialization
+	// makes the handlesMu lock gaps between helpers safe — no
+	// concurrent reload can modify state between reads and writes.
 	m.reloadMu.Lock()
 	defer m.reloadMu.Unlock()
 
-	// Re-read the env.d file for this plugin's credential group.
-	// This picks up vars added/changed since startup (e.g., by
-	// create_config writing IPA_CA_CERT to the env.d file).
-	//
-	// m.disabled, m.envGroups, and m.envErrors are also read by
-	// DisabledPlugins() under handlesMu.RLock, so writes here
-	// must hold handlesMu.Lock to avoid concurrent map access.
-	m.handlesMu.Lock()
-	var group string
-	if dp, ok := m.disabled[name]; ok {
-		group = dp.Manifest.CredentialGroup
-	} else if manifest, ok := m.manifests[name]; ok {
-		group = manifest.CredentialGroup
-	}
-	needEnvReread := group != "" && m.envDir != ""
-	envDirErr := m.envDirError
-	m.handlesMu.Unlock()
+	group, needEnvReread, envDirErr := m.reloadReadState(name)
 
 	if needEnvReread {
 		if envDirErr != "" {
@@ -841,36 +827,16 @@ func (m *Manager) Reload(ctx context.Context, name string) error {
 			if err := config.CheckPermissions(m.envDir, dirInfo); err != nil {
 				return fmt.Errorf("env.d directory still has issues: %w", err)
 			}
-			m.handlesMu.Lock()
-			m.envDirError = ""
-			m.handlesMu.Unlock()
-			log.Printf("[%s] env.d directory permissions fixed", name)
+			m.reloadClearEnvDirError(name)
 		}
 
 		vars, err := config.LoadSingleEnvGroup(m.envDir, group, m.envLoadOpts)
-
-		m.handlesMu.Lock()
-		if err != nil {
-			if _, wasDisabled := m.disabled[name]; wasDisabled {
-				m.handlesMu.Unlock()
-				return fmt.Errorf("env group %s still has issues: %w", group, err)
-			}
-			m.handlesMu.Unlock()
-			log.Printf("[%s] warning: env group %s re-read failed: %v", name, group, err)
-		} else {
-			m.envGroups[group] = vars
-			delete(m.envErrors, group)
-			delete(m.disabled, name)
-			m.handlesMu.Unlock()
-			log.Printf("[%s] env group %s re-read (%d vars)", name, group, len(vars))
+		if err := m.reloadUpdateEnv(name, group, vars, err); err != nil {
+			return err
 		}
 	}
 
-	m.handlesMu.RLock()
-	_, loaded := m.handles[name]
-	m.handlesMu.RUnlock()
-
-	if loaded {
+	if m.reloadIsLoaded(name) {
 		if err := m.Unload(ctx, name); err != nil {
 			return err
 		}
@@ -881,6 +847,60 @@ func (m *Manager) Reload(ctx context.Context, name string) error {
 		return err
 	}
 	return nil
+}
+
+// reloadReadState reads the credential group and env state for a
+// plugin under handlesMu. Returns the group name, whether an env
+// re-read is needed, and any env directory error.
+func (m *Manager) reloadReadState(name string) (group string, needReread bool, envDirErr string) {
+	m.handlesMu.Lock()
+	defer m.handlesMu.Unlock()
+
+	if dp, ok := m.disabled[name]; ok {
+		group = dp.Manifest.CredentialGroup
+	} else if manifest, ok := m.manifests[name]; ok {
+		group = manifest.CredentialGroup
+	}
+	needReread = group != "" && m.envDir != ""
+	envDirErr = m.envDirError
+	return
+}
+
+// reloadClearEnvDirError clears the env directory error under handlesMu.
+func (m *Manager) reloadClearEnvDirError(name string) {
+	m.handlesMu.Lock()
+	defer m.handlesMu.Unlock()
+	m.envDirError = ""
+	log.Printf("[%s] env.d directory permissions fixed", name)
+}
+
+// reloadUpdateEnv updates the env group state after a re-read attempt.
+// If loadErr is non-nil and the plugin was disabled, returns the error.
+// Otherwise logs a warning and continues.
+func (m *Manager) reloadUpdateEnv(name, group string, vars map[string]string, loadErr error) error {
+	m.handlesMu.Lock()
+	defer m.handlesMu.Unlock()
+
+	if loadErr != nil {
+		if _, wasDisabled := m.disabled[name]; wasDisabled {
+			return fmt.Errorf("env group %s still has issues: %w", group, loadErr)
+		}
+		log.Printf("[%s] warning: env group %s re-read failed: %v", name, group, loadErr)
+		return nil
+	}
+	m.envGroups[group] = vars
+	delete(m.envErrors, group)
+	delete(m.disabled, name)
+	log.Printf("[%s] env group %s re-read (%d vars)", name, group, len(vars))
+	return nil
+}
+
+// reloadIsLoaded checks whether the plugin has an active handle.
+func (m *Manager) reloadIsLoaded(name string) bool {
+	m.handlesMu.RLock()
+	defer m.handlesMu.RUnlock()
+	_, loaded := m.handles[name]
+	return loaded
 }
 
 // ShutdownAll stops all loaded plugins.
