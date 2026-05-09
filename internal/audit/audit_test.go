@@ -202,6 +202,86 @@ func TestScrubString(t *testing.T) {
 			input: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig",
 			want:  "[REDACTED]",
 		},
+		{ //nolint:gosec // G101: test data, not a real credential
+			name:  "GitHub PAT token prefix",
+			input: "auth error with token ghp_ABCDEFghijklmnopqrstuvwxyz1234567890",
+			want:  "auth error with token [REDACTED]",
+		},
+		{
+			name:  "GitLab PAT token prefix",
+			input: "unauthorized: glpat-xxxxxxxxxxxxxxxxxxxx rejected",
+			want:  "unauthorized: [REDACTED] rejected",
+		},
+		{ //nolint:gosec // G101: test data, not a real credential
+			name:  "AWS access key prefix",
+			input: "invalid credentials AKIAIOSFODNN7EXAMPLE for region us-east-1",
+			want:  "invalid credentials [REDACTED] for region us-east-1",
+		},
+		{
+			name:  "short sk- is not redacted",
+			input: "using sk-1 for testing",
+			want:  "using sk-1 for testing",
+		},
+		{
+			name:  "URL with sensitive query param name",
+			input: "error fetching https://api.example.com/v1?token=mysecretvalue&page=5",
+			want:  "error fetching https://api.example.com/v1?page=5&token=[REDACTED]",
+		},
+		{
+			name:  "URL with api_key param",
+			input: "failed: https://api.example.com?api_key=secret123&format=json",
+			want:  "failed: https://api.example.com?api_key=[REDACTED]&format=json",
+		},
+		{
+			name:  "URL with no sensitive params unchanged",
+			input: "fetching https://api.example.com/v1?page=5&limit=10",
+			want:  "fetching https://api.example.com/v1?page=5&limit=10",
+		},
+		{
+			name:  "URL with high-entropy param value",
+			input: "see https://example.com?data=abcdefghijklmnopqrstuvwxyz0123456789AB",
+			want:  "see https://example.com?data=[REDACTED]",
+		},
+		{
+			name:  "query string without scheme",
+			input: "error at path?token=secretvalue123 during auth",
+			want:  "error at path?token=[REDACTED] during auth",
+		},
+		{
+			name:  "Slack token prefix",
+			input: "slack auth failed: xoxb-1234567890123-1234567890123-ABCDEFghijklm",
+			want:  "slack auth failed: [REDACTED]",
+		},
+		{ //nolint:gosec // G101: test data, not a real credential
+			name:  "userinfo credentials in URL",
+			input: "failed to connect to https://deploy:ghp_ABCDEFghijklmnopqrstuvwxyz1234567890@api.github.com/repos",
+			want:  "failed to connect to https://[REDACTED]:[REDACTED]@api.github.com/repos",
+		},
+		{ //nolint:gosec // G101: test data, not a real credential
+			name:  "userinfo with password only",
+			input: "error at https://user:secretpass@internal.corp.com/api",
+			want:  "error at https://[REDACTED]:[REDACTED]@internal.corp.com/api",
+		},
+		{
+			name:  "percent-encoded JWT in query param",
+			input: "see https://example.com?token=%65%79%4AhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig",
+			want:  "see https://example.com?token=[REDACTED]",
+		},
+		{ //nolint:gosec // G101: test data, not a real credential
+			name:  "fragment-embedded access_token",
+			input: "error at https://example.com/callback#access_token=ghp_ABCDEFghijklmnopqrstuvwxyz1234567890&state=xyz",
+			want:  "error at https://example.com/callback#access_token=[REDACTED]&state=xyz",
+		},
+		{ //nolint:gosec // G101: test data, not a real credential
+			name:  "fragment with sensitive key name",
+			input: "redirect to https://example.com/cb#token=secretvalue123&state=abc",
+			want:  "redirect to https://example.com/cb#state=abc&token=[REDACTED]",
+		},
+		{
+			name:  "URL unchanged by scrubURLParams falls through to entropy check",
+			input: "see https://example.com/abcdefghijklmnopqrstuvwxyz0123456789ABCDEF",
+			want:  "see [REDACTED]",
+		},
 	}
 
 	for _, tt := range tests {

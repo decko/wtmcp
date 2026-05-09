@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -352,6 +353,19 @@ func (s *Scrubber) scrubArray(arr []json.RawMessage, original json.RawMessage) j
 	return result
 }
 
+// knownTokenPrefixes are prefixes for well-known API token formats.
+// A word matching a prefix with total length >= minTokenPrefixLen is
+// redacted regardless of entropy.
+var knownTokenPrefixes = []string{
+	"ghp_", "gho_", "ghu_", "ghs_", // GitHub
+	"glpat-",         // GitLab
+	"sk-",            // OpenAI, Stripe
+	"xoxb-", "xoxp-", // Slack
+	"AKIA", // AWS
+}
+
+const minTokenPrefixLen = 20
+
 // ScrubString redacts sensitive patterns in a plain string (e.g.,
 // error messages that may embed tokens or credentials).
 func (s *Scrubber) ScrubString(str string) string {
@@ -360,13 +374,118 @@ func (s *Scrubber) ScrubString(str string) string {
 	}
 	words := strings.Fields(str)
 	for i, w := range words {
-		if strings.HasPrefix(w, "eyJ") && len(w) > 32 {
+		switch {
+		case strings.HasPrefix(w, "eyJ") && len(w) > 32:
 			words[i] = "[REDACTED]"
-		} else if len(w) >= 32 && isHighEntropy(w) {
+		case hasKnownTokenPrefix(w):
+			words[i] = "[REDACTED]"
+		case s.scrubValues && (strings.Contains(w, "://") || strings.Contains(w, "?")):
+			scrubbed := s.scrubURLParams(w)
+			words[i] = scrubbed
+			if scrubbed == w && len(w) >= 32 && isHighEntropy(w) {
+				words[i] = "[REDACTED]"
+			}
+		case len(w) >= 32 && isHighEntropy(w):
 			words[i] = "[REDACTED]"
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+func hasKnownTokenPrefix(w string) bool {
+	if len(w) < minTokenPrefixLen {
+		return false
+	}
+	for _, prefix := range knownTokenPrefixes {
+		if strings.HasPrefix(w, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// scrubURLParams redacts sensitive query parameter values, userinfo
+// credentials, and fragment-embedded tokens in URLs.
+func (s *Scrubber) scrubURLParams(word string) string {
+	u, err := url.Parse(word)
+	if err != nil {
+		return word
+	}
+
+	changed := false
+
+	// Redact userinfo credentials (https://user:token@host/path)
+	if u.User != nil {
+		u.User = url.UserPassword("[REDACTED]", "[REDACTED]")
+		changed = true
+	}
+
+	// Redact sensitive query parameter values
+	if u.RawQuery != "" {
+		q := u.Query()
+		for key, vals := range q {
+			if s.isSensitive(key) {
+				for j := range vals {
+					q[key][j] = "[REDACTED]"
+					changed = true
+				}
+				continue
+			}
+			for j, v := range vals {
+				decoded, decErr := url.QueryUnescape(v)
+				if decErr != nil {
+					decoded = v
+				}
+				if (strings.HasPrefix(decoded, "eyJ") && len(decoded) > 32) ||
+					(len(decoded) >= 32 && isHighEntropy(decoded)) ||
+					hasKnownTokenPrefix(decoded) {
+					q[key][j] = "[REDACTED]"
+					changed = true
+				}
+			}
+		}
+		if changed {
+			u.RawQuery = q.Encode()
+		}
+	}
+
+	// Redact fragment-embedded tokens (OAuth2 implicit flow:
+	// https://example.com/callback#access_token=xxx&token_type=bearer)
+	if u.Fragment != "" {
+		fragParams, parseErr := url.ParseQuery(u.Fragment)
+		if parseErr == nil && len(fragParams) > 0 {
+			fragChanged := false
+			for key, vals := range fragParams {
+				if s.isSensitive(key) {
+					for j := range vals {
+						fragParams[key][j] = "[REDACTED]"
+						fragChanged = true
+					}
+					continue
+				}
+				for j, v := range vals {
+					if (strings.HasPrefix(v, "eyJ") && len(v) > 32) ||
+						(len(v) >= 32 && isHighEntropy(v)) ||
+						hasKnownTokenPrefix(v) {
+						fragParams[key][j] = "[REDACTED]"
+						fragChanged = true
+					}
+				}
+			}
+			if fragChanged {
+				encoded := fragParams.Encode()
+				decoded, _ := url.QueryUnescape(encoded)
+				u.Fragment = decoded
+				u.RawFragment = encoded
+				changed = true
+			}
+		}
+	}
+
+	if !changed {
+		return word
+	}
+	return strings.ReplaceAll(u.String(), "%5BREDACTED%5D", "[REDACTED]")
 }
 
 func (s *Scrubber) isSensitive(fieldName string) bool {
