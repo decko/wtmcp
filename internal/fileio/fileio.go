@@ -235,8 +235,15 @@ func resolvePath(outputDir, path string, mkdir *bool) (string, error) {
 		return "", fmt.Errorf("invalid path")
 	}
 
-	// Step 4: Resolve outputDir base (must exist).
+	// Step 4: Resolve outputDir base. If it doesn't exist, create it
+	// lazily (no eager creation at startup since Phase 5).
 	resolvedBase, err := filepath.EvalSymlinks(outputDir)
+	if err != nil && os.IsNotExist(err) {
+		if mkErr := os.MkdirAll(outputDir, dirMode); mkErr != nil {
+			return "", fmt.Errorf("create output directory failed")
+		}
+		resolvedBase, err = filepath.EvalSymlinks(outputDir)
+	}
 	if err != nil {
 		return "", fmt.Errorf("resolve output directory failed")
 	}
@@ -301,9 +308,14 @@ func resolveReadPath(outputDir, path string) (string, error) {
 		return "", fmt.Errorf("invalid path")
 	}
 
-	// Resolve base, then clean+join using resolved base.
+	// Resolve base. If outputDir doesn't exist, no files can exist
+	// there — return "file not found" rather than a confusing
+	// resolution error.
 	resolvedBase, err := filepath.EvalSymlinks(outputDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("file not found")
+		}
 		return "", fmt.Errorf("resolve output directory failed")
 	}
 	cleaned := filepath.Clean(filepath.Join(resolvedBase, path))

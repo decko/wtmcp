@@ -1153,3 +1153,47 @@ func verifyNoEscape(t *testing.T, outputDir string) {
 		return nil
 	})
 }
+
+// --- Lazy outputDir creation (Phase 5) ---
+
+func TestWriteFile_LazyOutputDirCreation(t *testing.T) {
+	// outputDir does not exist — WriteFile should create it lazily.
+	root := t.TempDir()
+	outputDir := filepath.Join(root, "lazy", "plugin")
+	cfg := Config{
+		OutputDir: outputDir,
+		TmpDir:    t.TempDir(),
+		SizeLimit: defaultSizeLimit,
+	}
+
+	result, err := WriteFile(cfg, WriteRequest{
+		Path: "data.json", Content: "hello", HasContent: true,
+	})
+	if err != nil {
+		t.Fatalf("WriteFile should lazily create outputDir: %v", err)
+	}
+	if _, err := os.Stat(result.Path); err != nil {
+		t.Fatalf("file should exist at returned path: %v", err)
+	}
+	got, _ := os.ReadFile(result.Path)
+	if string(got) != "hello" {
+		t.Errorf("content = %q, want hello", got)
+	}
+}
+
+func TestReadFile_NonexistentOutputDir(t *testing.T) {
+	// outputDir does not exist — ReadFile should return "file not found".
+	cfg := Config{
+		OutputDir: filepath.Join(t.TempDir(), "nonexistent", "plugin"),
+		TmpDir:    t.TempDir(),
+		SizeLimit: defaultSizeLimit,
+	}
+
+	_, err := ReadFile(cfg, ReadRequest{Path: "data.json"})
+	if err == nil {
+		t.Fatal("expected error for non-existent outputDir")
+	}
+	if !strings.Contains(err.Error(), "file not found") {
+		t.Errorf("error = %q, want 'file not found'", err.Error())
+	}
+}
