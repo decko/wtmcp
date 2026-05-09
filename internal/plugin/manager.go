@@ -944,7 +944,7 @@ func (m *Manager) Manifests() map[string]*Manifest {
 	defer m.handlesMu.RUnlock()
 	snapshot := make(map[string]*Manifest, len(m.manifests))
 	for k, v := range m.manifests {
-		snapshot[k] = v
+		snapshot[k] = v.Clone()
 	}
 	return snapshot
 }
@@ -957,7 +957,9 @@ func (m *Manager) DisabledPlugins() map[string]DisabledPlugin {
 	defer m.handlesMu.RUnlock()
 	snapshot := make(map[string]DisabledPlugin, len(m.disabled))
 	for k, v := range m.disabled {
-		snapshot[k] = v
+		dp := v
+		dp.Manifest = v.Manifest.Clone()
+		snapshot[k] = dp
 	}
 	return snapshot
 }
@@ -1068,10 +1070,15 @@ func (m *Manager) decryptCredentialIfVault(pluginName, path string) (string, err
 	return sf.Path(), nil
 }
 
-// ConfigDisabledPlugins returns plugins that were skipped during
-// discovery because they are listed in plugins.disabled config.
+// ConfigDisabledPlugins returns a snapshot of plugins that were
+// skipped during discovery because they are listed in
+// plugins.disabled config.
 func (m *Manager) ConfigDisabledPlugins() map[string]*Manifest {
-	return m.configDisabled
+	snapshot := make(map[string]*Manifest, len(m.configDisabled))
+	for k, v := range m.configDisabled {
+		snapshot[k] = v.Clone()
+	}
+	return snapshot
 }
 
 // LoadedPlugins returns the names of successfully loaded plugins.

@@ -3,12 +3,15 @@
 package plugin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/LeGambiArt/wtmcp/internal/domaincheck"
@@ -242,6 +245,111 @@ func (m *Manifest) ProvidesResources() bool {
 	return m.Provides.Resources
 }
 
+// Clone returns a deep copy of the manifest. All slice and map fields
+// are independently copied so callers cannot race with mutations.
+// Update this method when adding slice/map fields to Manifest or its
+// nested types.
+func (m *Manifest) Clone() *Manifest {
+	c := *m
+
+	// Pointer fields
+	c.Enabled = cloneBoolPtr(m.Enabled)
+	if m.Provides.Auth != nil {
+		auth := *m.Provides.Auth
+		c.Provides.Auth = &auth
+	}
+
+	c.DependsOn = slices.Clone(m.DependsOn)
+	c.Env = slices.Clone(m.Env)
+	c.ContextFiles = slices.Clone(m.ContextFiles)
+	c.Config = maps.Clone(m.Config)
+	c.Tools = cloneTools(m.Tools)
+	c.resolvedConfig = slices.Clone(m.resolvedConfig)
+
+	c.Services.Auth = cloneAuthServiceConfig(m.Services.Auth)
+	c.Services.Cache.Enabled = cloneBoolPtr(m.Services.Cache.Enabled)
+	c.Services.HTTP.AllowedDomains = slices.Clone(m.Services.HTTP.AllowedDomains)
+	c.Services.HTTP.TLS.CACertPEM = bytes.Clone(m.Services.HTTP.TLS.CACertPEM)
+
+	if m.Setup.Credentials != nil {
+		c.Setup.Credentials = maps.Clone(m.Setup.Credentials)
+	}
+	if m.Setup.Variants != nil {
+		c.Setup.Variants = make(map[string]SetupVariant, len(m.Setup.Variants))
+		for k, v := range m.Setup.Variants {
+			v.Required = slices.Clone(v.Required)
+			c.Setup.Variants[k] = v
+		}
+	}
+
+	return &c
+}
+
+func cloneBoolPtr(p *bool) *bool {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func effectiveAccess(a string) string {
+	if a == "" {
+		return "write"
+	}
+	return a
+}
+
+func deepCopyDefault(v any) any {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var out any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return v
+	}
+	return out
+}
+
+func cloneTools(tools []ToolDef) []ToolDef {
+	if tools == nil {
+		return nil
+	}
+	cloned := make([]ToolDef, len(tools))
+	for i, t := range tools {
+		cloned[i] = t
+		if t.Params != nil {
+			cloned[i].Params = make(map[string]ParamDef, len(t.Params))
+			for k, p := range t.Params {
+				if p.Items != nil {
+					items := *p.Items
+					p.Items = &items
+				}
+				if p.Default != nil {
+					p.Default = deepCopyDefault(p.Default)
+				}
+				cloned[i].Params[k] = p
+			}
+		}
+	}
+	return cloned
+}
+
+func cloneAuthServiceConfig(a AuthServiceConfig) AuthServiceConfig {
+	a.SPNEGOProactive = cloneBoolPtr(a.SPNEGOProactive)
+	a.Scopes = slices.Clone(a.Scopes)
+	a.VariantOrder = slices.Clone(a.VariantOrder)
+	if a.Variants != nil {
+		orig := a.Variants
+		a.Variants = make(map[string]AuthServiceConfig, len(orig))
+		for k, v := range orig {
+			a.Variants[k] = cloneAuthServiceConfig(v)
+		}
+	}
+	return a
+}
+
 // HandlerPath returns the absolute path to the handler executable.
 func (m *Manifest) HandlerPath() string {
 	return filepath.Join(m.Dir, m.Handler)
@@ -424,7 +532,7 @@ func (m *Manifest) Validate() error {
 	if m.Concurrency > 1 && len(m.Tools) > 1 {
 		first := m.Tools[0]
 		for _, tool := range m.Tools[1:] {
-			if tool.Access != first.Access {
+			if effectiveAccess(tool.Access) != effectiveAccess(first.Access) {
 				return fmt.Errorf("concurrency > 1 requires all tools to have the same access level")
 			}
 			if tool.LocalWrite != first.LocalWrite {

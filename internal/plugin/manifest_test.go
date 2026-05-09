@@ -3,6 +3,7 @@ package plugin
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -847,4 +848,78 @@ func TestLoadManifest_SizeLimit(t *testing.T) {
 			t.Errorf("expected size limit error, got: %v", err)
 		}
 	})
+}
+
+func TestManifestCloneIndependence(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+	original := &Manifest{
+		Name:         "test",
+		Enabled:      &boolTrue,
+		DependsOn:    []string{"dep1"},
+		Env:          []string{"VAR1"},
+		ContextFiles: []string{"context.md"},
+		Config:       map[string]string{"k": "v"},
+		Tools: []ToolDef{
+			{
+				Name:   "tool1",
+				Params: map[string]ParamDef{"p1": {Type: "string"}},
+			},
+		},
+		Services: ServiceConfig{
+			Auth: AuthServiceConfig{
+				SPNEGOProactive: &boolFalse,
+				Scopes:          []string{"scope1"},
+				VariantOrder:    []string{"v1"},
+				Variants: map[string]AuthServiceConfig{
+					"v1": {
+						Scopes: []string{"inner-scope"},
+					},
+				},
+			},
+			HTTP: HTTPServiceConfig{
+				AllowedDomains: []string{"example.com"},
+				TLS:            TLSConfig{CACertPEM: []byte("cert-data")},
+			},
+			Cache: CacheServiceConfig{
+				Enabled: &boolTrue,
+			},
+		},
+		Provides: ProvidesConfig{
+			Auth: &ProvidesAuthConfig{Type: "custom", Description: "test auth"},
+		},
+		Setup: SetupConfig{
+			Credentials: map[string]CredentialMeta{"cred1": {Description: "desc"}},
+			Variants: map[string]SetupVariant{
+				"sv1": {Required: []string{"req1"}},
+			},
+		},
+	}
+
+	pristine := original.Clone()
+	clone := original.Clone()
+
+	// Mutate every mutable field on the clone.
+	clone.DependsOn[0] = "MUTATED"
+	clone.Env[0] = "MUTATED"
+	clone.ContextFiles[0] = "MUTATED"
+	clone.Config["k"] = "MUTATED"
+	clone.Tools[0].Params["p1"] = ParamDef{Type: "MUTATED"}
+	clone.Services.Auth.Scopes[0] = "MUTATED"
+	clone.Services.Auth.VariantOrder[0] = "MUTATED"
+	clone.Services.Auth.Variants["v1"] = AuthServiceConfig{Scopes: []string{"MUTATED"}}
+	clone.Services.HTTP.AllowedDomains[0] = "MUTATED"
+	clone.Services.HTTP.TLS.CACertPEM[0] = 'X'
+	clone.Setup.Credentials["cred1"] = CredentialMeta{Description: "MUTATED"}
+	clone.Setup.Variants["sv1"] = SetupVariant{Required: []string{"MUTATED"}}
+
+	// Mutate pointer fields on the clone.
+	*clone.Enabled = false
+	*clone.Services.Auth.SPNEGOProactive = true
+	*clone.Services.Cache.Enabled = false
+	clone.Provides.Auth.Type = "MUTATED"
+
+	if !reflect.DeepEqual(original, pristine) {
+		t.Error("mutating clone should not affect original")
+	}
 }
