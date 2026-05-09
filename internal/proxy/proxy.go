@@ -335,7 +335,7 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 
 	fullURL, err := p.resolveURL(pluginName, pa, req)
 	if err != nil {
-		return errResponse(req.ID, "invalid_url", err.Error())
+		return errResponse(req.ID, "invalid_url", p.scrubError(err.Error()))
 	}
 
 	if p.rateLimiter != nil {
@@ -391,12 +391,12 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 
 		httpReq, err := p.buildRequest(ctx, fullURL, req)
 		if err != nil {
-			return errResponse(req.ID, "build_request", err.Error())
+			return errResponse(req.ID, "build_request", p.scrubError(err.Error()))
 		}
 
 		if !req.NoAuth && pa.Provider != nil && pa.Client == nil {
 			if err := p.injectAuth(ctx, pa.Provider, httpReq); err != nil {
-				return errResponse(req.ID, "auth_failed", err.Error())
+				return errResponse(req.ID, "auth_failed", p.scrubError(err.Error()))
 			}
 		}
 
@@ -425,7 +425,7 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 			ID:     req.ID,
 			Type:   protocol.TypeHTTPResponse,
 			Status: 0,
-			Error:  &protocol.Error{Code: code, Message: doErr.Error()},
+			Error:  &protocol.Error{Code: code, Message: p.scrubError(doErr.Error())},
 		}
 	}
 
@@ -442,7 +442,7 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 	body, bodyEncoding, err := p.readBody(resp)
 	if err != nil {
 		p.auditHTTP(ctx, pluginName, method, fullURL, resp.StatusCode, 0)
-		return errResponse(req.ID, "response_too_large", err.Error())
+		return errResponse(req.ID, "response_too_large", p.scrubError(err.Error()))
 	}
 
 	p.auditHTTP(ctx, pluginName, method, fullURL, resp.StatusCode, int64(len(body)))
@@ -730,6 +730,16 @@ func errResponse(id, code, message string) protocol.Message {
 		Status: 0,
 		Error:  &protocol.Error{Code: code, Message: message},
 	}
+}
+
+// scrubError redacts sensitive patterns from error messages before
+// returning them to plugins. Prevents leaking internal hostnames,
+// certificate details, and token endpoint URLs in error responses.
+func (p *Proxy) scrubError(msg string) string {
+	if p.auditor != nil {
+		return p.auditor.ScrubErrorText(msg)
+	}
+	return msg
 }
 
 // safeRedirectHeaders are headers preserved on cross-domain redirects.
