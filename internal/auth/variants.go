@@ -110,7 +110,7 @@ func providerFromConfig(typeName string, cfg SingleAuthConfig) (Provider, error)
 	case "oauth2":
 		return NewOAuth2Provider(cfg.TokenFile, cfg.CredentialsFile, cfg.Scopes, cfg.CredentialsDir, cfg.Transport)
 	case "refresh_token":
-		return NewRefreshTokenProvider(cfg.TokenURL, cfg.ClientID, cfg.Token, cfg.Transport)
+		return NewRefreshTokenProvider(cfg.TokenURL, cfg.ClientID, cfg.Token, cfg.Transport, cfg.TokenFile)
 	default:
 		return nil, fmt.Errorf("unknown auth type: %s", typeName)
 	}

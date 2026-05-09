@@ -8,9 +8,13 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/LeGambiArt/wtmcp/internal/config"
 )
 
 // RefreshTokenProvider exchanges a long-lived refresh/offline token
@@ -21,11 +25,10 @@ import (
 // refresh_token grant type (Keycloak, Azure AD, Okta, etc.).
 //
 // If the token endpoint rotates the refresh token (RFC 6749 Section 6),
-// the provider updates its in-memory copy. However, the rotated token
-// is NOT persisted — on process restart the original env-var value is
-// used. If the endpoint revoked the old token, auth will fail. To
-// avoid this, configure the SSO client with rotation disabled or use
-// offline tokens (which typically do not rotate).
+// the provider updates its in-memory copy. When tokenFile is configured,
+// the rotated token is persisted atomically so it survives process
+// restarts. Without tokenFile, the original env-var value is used on
+// restart, which will fail if the endpoint revoked the old token.
 type RefreshTokenProvider struct {
 	mu           sync.Mutex
 	tokenURL     string
@@ -34,12 +37,18 @@ type RefreshTokenProvider struct {
 	accessToken  string
 	expiry       time.Time
 	client       *http.Client
+	tokenFile    string // optional: persist rotated refresh tokens
 }
 
 // NewRefreshTokenProvider creates a refresh-token auth provider.
 // Returns an error if tokenURL is not a valid HTTPS URL or if
 // transport is nil.
-func NewRefreshTokenProvider(tokenURL, clientID, refreshToken string, transport http.RoundTripper) (*RefreshTokenProvider, error) {
+//
+// If tokenFile is non-empty and the file exists with a valid
+// refresh token, that token is used instead of the refreshToken
+// parameter. When the token endpoint rotates the refresh token,
+// the new token is persisted to tokenFile atomically.
+func NewRefreshTokenProvider(tokenURL, clientID, refreshToken string, transport http.RoundTripper, tokenFile string) (*RefreshTokenProvider, error) {
 	u, err := url.Parse(tokenURL)
 	if err != nil {
 		return nil, fmt.Errorf("refresh_token: invalid token_url: %w", err)
@@ -51,11 +60,20 @@ func NewRefreshTokenProvider(tokenURL, clientID, refreshToken string, transport 
 		return nil, fmt.Errorf("refresh_token: transport must not be nil")
 	}
 
+	if tokenFile != "" {
+		if persisted, err := loadRefreshToken(tokenFile); err != nil {
+			log.Printf("refresh_token: cannot read token file %s: %v (using env token)", tokenFile, err)
+		} else if persisted != "" {
+			refreshToken = persisted
+		}
+	}
+
 	return &RefreshTokenProvider{
 		tokenURL:     tokenURL,
 		clientID:     clientID,
 		refreshToken: refreshToken,
 		client:       &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		tokenFile:    tokenFile,
 	}, nil
 }
 
@@ -118,12 +136,7 @@ func (r *RefreshTokenProvider) refresh(ctx context.Context) error {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Include truncated response body for debugging (no credentials).
-		detail := string(body)
-		if len(detail) > 200 {
-			detail = detail[:200]
-		}
-		return fmt.Errorf("refresh_token: HTTP %d from token endpoint: %s", resp.StatusCode, detail)
+		return fmt.Errorf("refresh_token: HTTP %d from token endpoint", resp.StatusCode)
 	}
 
 	var tok refreshTokenResponse
@@ -138,8 +151,13 @@ func (r *RefreshTokenProvider) refresh(ctx context.Context) error {
 	r.accessToken = tok.AccessToken
 
 	// Handle refresh token rotation (RFC 6749 Section 6).
-	if tok.RefreshToken != "" {
+	if tok.RefreshToken != "" && tok.RefreshToken != r.refreshToken {
 		r.refreshToken = tok.RefreshToken
+		if r.tokenFile != "" {
+			if err := saveRefreshToken(r.tokenFile, tok.RefreshToken); err != nil {
+				log.Printf("refresh_token: failed to persist rotated token: %v", err)
+			}
+		}
 	}
 
 	// Refresh at 90% of expiry to avoid edge-case failures.
@@ -151,4 +169,66 @@ func (r *RefreshTokenProvider) refresh(ctx context.Context) error {
 
 	log.Printf("refresh_token: token refreshed (expires in %ds)", expiresIn)
 	return nil
+}
+
+type persistedRefreshToken struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+func loadRefreshToken(path string) (string, error) {
+	if err := config.RejectSymlink(path); err != nil {
+		return "", fmt.Errorf("token file: %w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if err := config.CheckPermissions(path, info); err != nil {
+		return "", fmt.Errorf("token file: %w", err)
+	}
+
+	data, err := os.ReadFile(path) //nolint:gosec // path validated above
+	if err != nil {
+		return "", err
+	}
+	var tok persistedRefreshToken
+	if err := json.Unmarshal(data, &tok); err != nil {
+		return "", fmt.Errorf("parse: %w", err)
+	}
+	return tok.RefreshToken, nil
+}
+
+func saveRefreshToken(path, token string) error {
+	data, err := json.Marshal(persistedRefreshToken{RefreshToken: token}) //nolint:gosec // G117: intentional — persisting rotated token
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil { //nolint:gosec // path from validated config
+		return fmt.Errorf("create dir: %w", err)
+	}
+
+	f, err := os.CreateTemp(dir, ".wtmcp-refresh-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	defer os.Remove(f.Name()) //nolint:errcheck // cleanup on failure
+
+	if err := f.Chmod(0o600); err != nil {
+		f.Close() //nolint:errcheck,gosec
+		return fmt.Errorf("chmod temp: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close() //nolint:errcheck,gosec
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close() //nolint:errcheck,gosec
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path) //nolint:gosec // path from validated config
 }

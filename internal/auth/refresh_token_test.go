@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,7 +41,7 @@ func newTestServer(t *testing.T, handler func(grant, clientID, refresh string) (
 // newProvider creates a RefreshTokenProvider pointing at the test server.
 func newProvider(t *testing.T, srv *httptest.Server) *RefreshTokenProvider {
 	t.Helper()
-	p, err := NewRefreshTokenProvider(srv.URL, "test-client", "offline-tok", srv.Client().Transport)
+	p, err := NewRefreshTokenProvider(srv.URL, "test-client", "offline-tok", srv.Client().Transport, "")
 	if err != nil {
 		t.Fatalf("NewRefreshTokenProvider: %v", err)
 	}
@@ -221,7 +223,7 @@ func TestMalformedJSON(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok", srv.Client().Transport)
+	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok", srv.Client().Transport, "")
 	p.client = srv.Client()
 
 	_, err := p.Authenticate(context.Background(), nil)
@@ -244,7 +246,7 @@ func TestOversizedResponse(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok", srv.Client().Transport)
+	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok", srv.Client().Transport, "")
 	p.client = srv.Client()
 
 	_, err := p.Authenticate(context.Background(), nil)
@@ -276,7 +278,7 @@ func TestMissingExpiresInDefaults(t *testing.T) {
 }
 
 func TestNonHTTPSRejected(t *testing.T) {
-	_, err := NewRefreshTokenProvider("http://sso.example.com/token", "client", "tok", nil)
+	_, err := NewRefreshTokenProvider("http://sso.example.com/token", "client", "tok", nil, "")
 	if err == nil {
 		t.Fatal("expected error for http:// URL")
 	}
@@ -286,7 +288,7 @@ func TestNonHTTPSRejected(t *testing.T) {
 }
 
 func TestInvalidURL(t *testing.T) {
-	_, err := NewRefreshTokenProvider("://bad", "client", "tok", nil)
+	_, err := NewRefreshTokenProvider("://bad", "client", "tok", nil, "")
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
 	}
@@ -301,7 +303,7 @@ func TestContextCancellation(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok", srv.Client().Transport)
+	p, _ := NewRefreshTokenProvider(srv.URL, "client", "tok", srv.Client().Transport, "")
 	p.client = srv.Client()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -323,6 +325,102 @@ func TestContextCancellation(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Authenticate did not return within 5s after context timeout")
+	}
+}
+
+func TestSaveLoadRefreshToken(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token.json")
+
+	if err := saveRefreshToken(path, "my-rotated-token"); err != nil {
+		t.Fatalf("saveRefreshToken: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		t.Errorf("file mode = %04o, want no group/other access", mode)
+	}
+
+	tok, err := loadRefreshToken(path)
+	if err != nil {
+		t.Fatalf("loadRefreshToken: %v", err)
+	}
+	if tok != "my-rotated-token" {
+		t.Errorf("token = %q, want %q", tok, "my-rotated-token")
+	}
+}
+
+func TestLoadRefreshToken_MissingFile(t *testing.T) {
+	_, err := loadRefreshToken(filepath.Join(t.TempDir(), "nonexistent.json"))
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestLoadRefreshToken_LoosePermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token.json")
+	data := `{"refresh_token":"tok"}`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil { //nolint:gosec // intentionally loose for test
+		t.Fatal(err)
+	}
+
+	_, err := loadRefreshToken(path)
+	if err == nil {
+		t.Fatal("expected error for loose permissions")
+	}
+	if !strings.Contains(err.Error(), "group/other") {
+		t.Errorf("error = %q, want group/other permission error", err)
+	}
+}
+
+func TestLoadRefreshToken_Symlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.json")
+	link := filepath.Join(dir, "link.json")
+
+	if err := os.WriteFile(target, []byte(`{"refresh_token":"tok"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := loadRefreshToken(link)
+	if err == nil {
+		t.Fatal("expected error for symlink")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error = %q, want symlink error", err)
+	}
+}
+
+func TestNewRefreshTokenProvider_PrefersPersistedToken(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token.json")
+	if err := saveRefreshToken(path, "persisted-tok"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, func(_, _, refresh string) (any, int) {
+		if refresh != "persisted-tok" {
+			t.Errorf("refresh = %q, want %q", refresh, "persisted-tok")
+		}
+		return refreshTokenResponse{AccessToken: "access", ExpiresIn: 3600}, 200
+	})
+
+	p, err := NewRefreshTokenProvider(srv.URL, "client", "env-tok", srv.Client().Transport, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.client = srv.Client()
+
+	_, err = p.Authenticate(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
 	}
 }
 
