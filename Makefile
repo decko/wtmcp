@@ -7,6 +7,7 @@ VERSION ?= $(shell cat VERSION 2>/dev/null || echo "dev")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 BINDIR := bin
 LDFLAGS := -s -w -X main.Version=$(VERSION) -X main.BuildDate=$(BUILD_DATE)
+GOFLAGS ?= -trimpath -buildmode=pie
 export PKG_CONFIG_PATH := /usr/local/lib/pkgconfig:$(PKG_CONFIG_PATH)
 
 # Default target
@@ -19,19 +20,19 @@ build: $(BINDIR)/wtmcp $(BINDIR)/wtmcpctl plugins
 $(BINDIR)/wtmcp: $(shell find cmd/wtmcp -name '*.go') $(shell find internal -name '*.go')
 	@echo "Building wtmcp..."
 	@mkdir -p $(BINDIR)
-	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/wtmcp ./cmd/wtmcp
+	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BINDIR)/wtmcp ./cmd/wtmcp
 
 # Build wtmcpctl binary
 $(BINDIR)/wtmcpctl: $(shell find cmd/wtmcpctl -name '*.go') $(shell find internal -name '*.go')
 	@echo "Building wtmcpctl..."
 	@mkdir -p $(BINDIR)
-	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/wtmcpctl ./cmd/wtmcpctl
+	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BINDIR)/wtmcpctl ./cmd/wtmcpctl
 
 # Build with sandbox support (requires libarapuca via pkg-config)
 build-sandbox: $(BINDIR)/wtmcpctl plugins
 	@echo "Building wtmcp (sandbox)..."
 	@mkdir -p $(BINDIR)
-	go build -tags sandbox -ldflags "$(LDFLAGS)" -o $(BINDIR)/wtmcp ./cmd/wtmcp
+	go build $(GOFLAGS) -tags sandbox -ldflags "$(LDFLAGS)" -o $(BINDIR)/wtmcp ./cmd/wtmcp
 
 # Build all plugins that have a Makefile
 plugins:
