@@ -285,7 +285,13 @@ func (p *Process) forceStop() error {
 	case <-time.After(p.shutdownKillAfter):
 		log.Printf("[%s] SIGTERM timed out, sending SIGKILL", p.manifest.Name)
 		p.cmd.Process.Kill() //nolint:errcheck,gosec // best effort
-		return p.cmd.Wait()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(5 * time.Second):
+			log.Printf("[%s] WARNING: process did not exit after SIGKILL", p.manifest.Name)
+			return fmt.Errorf("process %d did not exit after SIGKILL", p.cmd.Process.Pid)
+		}
 	}
 }
 
