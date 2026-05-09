@@ -13,6 +13,7 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/auth"
 	"github.com/LeGambiArt/wtmcp/internal/cache"
 	"github.com/LeGambiArt/wtmcp/internal/config"
+	"github.com/LeGambiArt/wtmcp/internal/protocol"
 	"github.com/LeGambiArt/wtmcp/internal/proxy"
 )
 
@@ -1536,4 +1537,118 @@ tools:
 	}
 
 	wg.Wait()
+}
+
+func TestHandleCacheAccessControl(t *testing.T) {
+	cacheStore := cache.NewMemoryStore()
+	handler := &serviceHandlerImpl{
+		cache: cacheStore,
+	}
+
+	tests := []struct {
+		name     string
+		access   string
+		msgType  string
+		wantErr  bool
+		wantCode string
+	}{
+		{"read+cache_set=blocked", "read", protocol.TypeCacheSet, true, "cache_error"},
+		{"read+cache_del=blocked", "read", protocol.TypeCacheDel, true, "cache_error"},
+		{"read+cache_flush=blocked", "read", protocol.TypeCacheFlush, true, "cache_error"},
+		{"read+cache_get=allowed", "read", protocol.TypeCacheGet, false, ""},
+		{"read+cache_list=allowed", "read", protocol.TypeCacheList, false, ""},
+		{"write+cache_set=allowed", "write", protocol.TypeCacheSet, false, ""},
+		{"empty+cache_set=allowed", "", protocol.TypeCacheSet, false, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tt.access != "" {
+				ctx = proxy.WithToolAccess(ctx, tt.access)
+			}
+			resp := handler.HandleCache(ctx, "test-plugin", protocol.Message{
+				ID:   "test-1",
+				Type: tt.msgType,
+				Key:  "test-key",
+			})
+			hasErr := resp.Error != nil
+			if hasErr != tt.wantErr {
+				t.Errorf("access=%q type=%s: error=%v, wantErr=%v",
+					tt.access, tt.msgType, resp.Error, tt.wantErr)
+			}
+			if tt.wantErr && resp.Error != nil {
+				if resp.Error.Code != tt.wantCode {
+					t.Errorf("error code = %q, want %q", resp.Error.Code, tt.wantCode)
+				}
+				if !strings.Contains(resp.Error.Message, "read-only") {
+					t.Errorf("expected 'read-only' in error, got %q", resp.Error.Message)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleFileIOAccessControl(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputDir := filepath.Join(tmpDir, "output")
+	plugTmpDir := filepath.Join(tmpDir, "tmp")
+	if err := os.MkdirAll(outputDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(plugTmpDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := &serviceHandlerImpl{}
+	handler.registerPluginDirs("test-plugin", outputDir, plugTmpDir)
+
+	testFile := filepath.Join(outputDir, "existing.txt")
+	if err := os.WriteFile(testFile, []byte("test data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		access   string
+		msgType  string
+		path     string
+		content  string
+		wantErr  bool
+		wantCode string
+	}{
+		{"read+file_write=blocked", "read", protocol.TypeFileWrite, "out.txt", "data", true, "fileio_error"},
+		{"read+file_read=allowed", "read", protocol.TypeFileRead, "existing.txt", "", false, ""},
+		{"write+file_write=allowed", "write", protocol.TypeFileWrite, "out2.txt", "data", false, ""},
+		{"empty+file_write=allowed", "", protocol.TypeFileWrite, "out3.txt", "data", false, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tt.access != "" {
+				ctx = proxy.WithToolAccess(ctx, tt.access)
+			}
+
+			resp := handler.HandleFileIO(ctx, "test-plugin", protocol.Message{
+				ID:      "test-1",
+				Type:    tt.msgType,
+				Path:    tt.path,
+				Content: tt.content,
+			})
+			hasErr := resp.Error != nil
+			if hasErr != tt.wantErr {
+				t.Errorf("access=%q type=%s: error=%v, wantErr=%v",
+					tt.access, tt.msgType, resp.Error, tt.wantErr)
+			}
+			if tt.wantErr && resp.Error != nil {
+				if resp.Error.Code != tt.wantCode {
+					t.Errorf("error code = %q, want %q", resp.Error.Code, tt.wantCode)
+				}
+				if !strings.Contains(resp.Error.Message, "read-only") {
+					t.Errorf("expected 'read-only' in error, got %q", resp.Error.Message)
+				}
+			}
+		})
+	}
 }

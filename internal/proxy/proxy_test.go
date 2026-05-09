@@ -1989,3 +1989,90 @@ func TestCumulativeDomainCap(t *testing.T) {
 		t.Errorf("overflow domains should be rejected but found in allowlist: %v", allowed)
 	}
 }
+
+func TestExecuteReadOnlyToolBlocksMutatingMethods(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("request should never reach the server for read-only tool with mutating method")
+	}))
+	defer srv.Close()
+
+	p := newTestProxy(srv.Client())
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	for _, method := range []string{"POST", "PUT", "DELETE", "PATCH"} {
+		t.Run(method, func(t *testing.T) {
+			ctx := WithToolAccess(context.Background(), "read")
+			resp := p.Execute(ctx, "test", protocol.Message{
+				ID: "ro-" + method, Type: protocol.TypeHTTPRequest,
+				Method: method, Path: "/api/modify",
+			})
+			if resp.Error == nil || resp.Error.Code != "method_not_allowed" {
+				t.Errorf("read-only tool %s should be blocked, got error=%v", method, resp.Error)
+			}
+		})
+	}
+}
+
+func TestExecuteReadOnlyToolAllowsReadMethods(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	p := newTestProxy(srv.Client())
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	for _, method := range []string{"GET", "HEAD", "OPTIONS"} {
+		t.Run(method, func(t *testing.T) {
+			ctx := WithToolAccess(context.Background(), "read")
+			resp := p.Execute(ctx, "test", protocol.Message{
+				ID: "ro-" + method, Type: protocol.TypeHTTPRequest,
+				Method: method, Path: "/api/read",
+			})
+			if resp.Error != nil {
+				t.Errorf("read-only tool %s should be allowed, got error=%v", method, resp.Error)
+			}
+		})
+	}
+}
+
+func TestExecuteWriteAccessAllowsMutatingMethods(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	p := newTestProxy(srv.Client())
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	ctx := WithToolAccess(context.Background(), "write")
+	resp := p.Execute(ctx, "test", protocol.Message{
+		ID: "wa-1", Type: protocol.TypeHTTPRequest,
+		Method: "POST", Path: "/api/create",
+	})
+	if resp.Error != nil {
+		t.Errorf("write-access tool POST should be allowed, got error=%v", resp.Error)
+	}
+}
+
+func TestExecuteNoAccessAnnotationAllowsMutatingMethods(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	p := newTestProxy(srv.Client())
+	p.RegisterPlugin("test", testPluginAuth(srv.URL))
+
+	// No WithToolAccess — simulates a tool with no access annotation
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID: "na-1", Type: protocol.TypeHTTPRequest,
+		Method: "POST", Path: "/api/create",
+	})
+	if resp.Error != nil {
+		t.Errorf("unannotated tool POST should be allowed, got error=%v", resp.Error)
+	}
+}
