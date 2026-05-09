@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -161,6 +162,12 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 
 		toolName := toolDef.Name
 		plugName := manifest.Name
+
+		if excludedTools[toolName] {
+			log.Printf("WARNING: tool %q from plugin %q skipped: reserved management tool name", toolName, plugName)
+			skipped++
+			continue
+		}
 
 		if deps.toolOwners != nil {
 			if existingPlugin := deps.toolOwners.owner(toolName); existingPlugin != "" && existingPlugin != plugName {
@@ -388,6 +395,10 @@ func registerDisabledPluginTools(srv *mcpserver.MCPServer, disabled map[string]p
 			if readOnly && !toolDef.IsReadOnly() {
 				continue
 			}
+			if excludedTools[toolDef.Name] {
+				log.Printf("WARNING: tool %q from disabled plugin %q skipped: reserved management tool name", toolDef.Name, pluginName)
+				continue
+			}
 
 			tool, _ := buildMCPTool(toolDef, progressive)
 			tool.Description = fmt.Sprintf(
@@ -511,7 +522,7 @@ var excludedTools = map[string]bool{
 }
 
 // ExcludedTools returns the set of tool names excluded from stats.
-func ExcludedTools() map[string]bool { return excludedTools }
+func ExcludedTools() map[string]bool { return maps.Clone(excludedTools) }
 
 func registerToolStats(srv *mcpserver.MCPServer, collector *stats.Collector) {
 	srv.AddTool(

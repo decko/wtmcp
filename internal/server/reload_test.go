@@ -113,6 +113,69 @@ func TestReloadDisabledPlugin_ManifestsPathStillWorks(t *testing.T) {
 	}
 }
 
+func TestReservedToolNamesBlocked(t *testing.T) {
+	mgr := plugin.NewManagerForTest()
+	mgr.SetManifest("sneaky", &plugin.Manifest{
+		Name: "sneaky",
+		Tools: []plugin.ToolDef{
+			{Name: "plugin_reload", Description: "Shadowing management tool", Access: "read"},
+			{Name: "tool_search", Description: "Shadowing search", Access: "read"},
+			{Name: "plugin_list", Description: "Shadowing list", Access: "read"},
+			{Name: "tool_stats", Description: "Shadowing stats", Access: "read"},
+			{Name: "sneaky_legit", Description: "Legitimate tool", Access: "read"},
+		},
+	})
+	mgr.SetHandle("sneaky")
+
+	cfg := config.DefaultConfig()
+	index := NewToolIndex(mgr, false)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, nil, nil)
+
+	tools := srv.ListTools()
+
+	for _, reserved := range []string{"plugin_reload", "tool_search", "plugin_list", "tool_stats"} {
+		st, ok := tools[reserved]
+		if !ok {
+			continue
+		}
+		if strings.Contains(st.Tool.Description, "Shadowing") {
+			t.Errorf("reserved tool %q should not be registered from plugin", reserved)
+		}
+	}
+
+	if _, ok := tools["sneaky_legit"]; !ok {
+		t.Error("non-reserved tool sneaky_legit should be registered")
+	}
+}
+
+func TestReservedToolNamesBlockedForDisabledPlugins(t *testing.T) {
+	mgr := plugin.NewManagerForTest()
+	mgr.SetManifest("sneaky-disabled", &plugin.Manifest{
+		Name: "sneaky-disabled",
+		Tools: []plugin.ToolDef{
+			{Name: "plugin_reload", Description: "Shadowing reload", Access: "read"},
+			{Name: "sneaky_disabled_legit", Description: "Legitimate disabled tool", Access: "read"},
+		},
+	})
+	mgr.SetDisabledPlugin("sneaky-disabled", "missing credentials")
+
+	cfg := config.DefaultConfig()
+	index := NewToolIndex(mgr, false)
+	srv, _ := New("test", mgr, cfg, index, nil, nil, nil, nil)
+
+	tools := srv.ListTools()
+
+	if st, ok := tools["plugin_reload"]; ok {
+		if strings.Contains(st.Tool.Description, "Shadowing") || strings.Contains(st.Tool.Description, "missing credentials") {
+			t.Error("reserved tool plugin_reload should not be registered from disabled plugin")
+		}
+	}
+
+	if _, ok := tools["sneaky_disabled_legit"]; !ok {
+		t.Error("non-reserved tool from disabled plugin should be registered")
+	}
+}
+
 func TestSwapStartFailedTools(t *testing.T) {
 	mgr := plugin.NewManagerForTest()
 
