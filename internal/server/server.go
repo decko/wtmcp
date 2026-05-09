@@ -903,17 +903,7 @@ func truncateUTF8(s string, maxLen int) string {
 	return s[:maxLen]
 }
 
-// isPluginError checks if the error is a protocol.Error using errors.As.
+// isPluginError checks if the error wraps a protocol.Error.
 func isPluginError(err error, target **protocol.Error) bool {
-	for {
-		if pe, ok := err.(*protocol.Error); ok { //nolint:errorlint // checking concrete type intentionally
-			*target = pe
-			return true
-		}
-		unwrapper, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = unwrapper.Unwrap()
-	}
+	return errors.As(err, target)
 }
