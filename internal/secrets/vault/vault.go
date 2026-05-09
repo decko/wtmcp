@@ -49,7 +49,10 @@ func Decrypt(data, password []byte) ([]byte, error) {
 	iv := derived[ivOffset : ivOffset+ivLen]
 
 	// HMAC covers ciphertext only (Ansible Vault format limitation:
-	// salt and IV are not authenticated).
+	// salt and IV are not authenticated). In practice, modifying the
+	// salt or IV changes the derived keys, which causes the HMAC to
+	// fail — so they are indirectly authenticated. This is an accepted
+	// risk for Ansible Vault format compatibility.
 	mac := hmac.New(sha256.New, hmacKey)
 	mac.Write(ciphertext)
 	computedHMAC := mac.Sum(nil)

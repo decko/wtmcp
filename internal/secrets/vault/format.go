@@ -24,8 +24,11 @@ const (
 	// supportedCipher is the only cipher supported by Ansible Vault.
 	supportedCipher = "AES256"
 
-	// pbkdf2Iterations is the hardcoded iteration count for
-	// Ansible Vault's PBKDF2 key derivation.
+	// pbkdf2Iterations is the Ansible Vault 1.1 iteration count.
+	// OWASP (2023) recommends 600,000+ for PBKDF2-HMAC-SHA256,
+	// but this value is fixed by the Ansible Vault wire format
+	// for interoperability. Mitigation: use high-entropy vault
+	// passwords (20+ random characters or a strong passphrase).
 	pbkdf2Iterations = 10000
 
 	// pbkdf2KeyLen is the total derived key length (80 bytes):
