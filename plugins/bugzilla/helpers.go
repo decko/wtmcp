@@ -204,6 +204,9 @@ func isBrief(v *bool) bool {
 	return v == nil || *v
 }
 
+// confineRead is a transitional fallback for reading files in sessionDir
+// that are not in outputDir (e.g., attachments). Should be removed when
+// the core file I/O service supports sessionDir reads directly.
 func confineRead(filePath string, allowedDirs ...string) (string, error) {
 	if filePath == "" {
 		return "", fmt.Errorf("file path is required")

@@ -2,8 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -1717,18 +1715,15 @@ func TestAddCommentIntBugID(t *testing.T) {
 // --- bugzilla_add_attachment tests ---
 
 func TestAddAttachmentDryRun(t *testing.T) {
-	_ = setupToolTest(t)
-
-	testFile := filepath.Join(cfg.outputDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	bridge := setupToolTest(t)
 
 	ch := callTool(toolAddAttachment, map[string]any{
 		"bug_id":    "123",
-		"file_path": testFile,
+		"file_path": "test.txt",
 		"summary":   "test attachment",
 	})
+
+	bridge.expectFileRead([]byte("content"))
 
 	r := collectResult(t, ch)
 	if r.err != nil {
@@ -1754,19 +1749,15 @@ func TestAddAttachmentDryRun(t *testing.T) {
 func TestAddAttachmentExecute(t *testing.T) {
 	bridge := setupToolTest(t)
 
-	testFile := filepath.Join(cfg.outputDir, "upload.txt")
-	if err := os.WriteFile(testFile, []byte("file content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	dryRunFalse := false
 	ch := callTool(toolAddAttachment, addAttachmentParams{
 		BugID:    "123",
-		FilePath: testFile,
+		FilePath: "upload.txt",
 		Summary:  "upload test",
 		DryRun:   &dryRunFalse,
 	})
 
+	bridge.expectFileRead([]byte("file content"))
 	req := bridge.expectHTTP(201, map[string]any{"ids": []float64{42}})
 
 	r := collectResult(t, ch)
@@ -1791,13 +1782,17 @@ func TestAddAttachmentExecute(t *testing.T) {
 }
 
 func TestAddAttachmentPathConfinement(t *testing.T) {
-	_ = setupToolTest(t)
+	bridge := setupToolTest(t)
 
 	ch := callTool(toolAddAttachment, map[string]any{
 		"bug_id":    "123",
 		"file_path": "/etc/passwd",
 		"summary":   "evil",
 	})
+
+	// FileRead fails (absolute path rejected by core), then sessionDir
+	// fallback also fails (/etc/passwd is outside sessionDir).
+	bridge.expectFileReadError("path escapes allowed directory")
 
 	r := collectResult(t, ch)
 	if r.err == nil {
@@ -1806,19 +1801,17 @@ func TestAddAttachmentPathConfinement(t *testing.T) {
 }
 
 func TestAddAttachmentSizeLimit(t *testing.T) {
-	_ = setupToolTest(t)
+	bridge := setupToolTest(t)
 
-	bigFile := filepath.Join(cfg.outputDir, "big.bin")
-	data := make([]byte, maxAttachBytes+100)
-	if err := os.WriteFile(bigFile, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	bigData := make([]byte, maxAttachBytes+100)
 
 	ch := callTool(toolAddAttachment, map[string]any{
 		"bug_id":    "123",
-		"file_path": bigFile,
+		"file_path": "big.bin",
 		"summary":   "too big",
 	})
+
+	bridge.expectFileRead(bigData)
 
 	r := collectResult(t, ch)
 	if r.err == nil {
@@ -1829,18 +1822,13 @@ func TestAddAttachmentSizeLimit(t *testing.T) {
 func TestAddAttachmentMissingRequired(t *testing.T) {
 	_ = setupToolTest(t)
 
-	testFile := filepath.Join(cfg.outputDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	tests := []struct {
 		name   string
 		params map[string]any
 	}{
 		{"no file_path", map[string]any{"bug_id": "1", "summary": "s"}},
-		{"no summary", map[string]any{"bug_id": "1", "file_path": testFile}},
-		{"no bug_id", map[string]any{"file_path": testFile, "summary": "s"}},
+		{"no summary", map[string]any{"bug_id": "1", "file_path": "test.txt"}},
+		{"no bug_id", map[string]any{"file_path": "test.txt", "summary": "s"}},
 	}
 
 	for _, tt := range tests {

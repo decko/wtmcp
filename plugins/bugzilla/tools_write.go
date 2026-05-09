@@ -339,23 +339,40 @@ func toolAddAttachment(params, _ json.RawMessage) (any, error) {
 		return nil, &handler.Error{Code: "validation_error", Message: "summary is required"}
 	}
 
-	if cfg.outputDir == "" && cfg.sessionDir == "" {
-		return nil, &handler.Error{Code: "no_output_dir", Message: "no output or session directory configured"}
+	// Try reading from outputDir via core file I/O service first.
+	// Normalize absolute paths by stripping the outputDir prefix
+	// (users/LLMs may pass full paths from prior tool results).
+	// Fall back to direct read from sessionDir (still in sandbox ReadPaths).
+	var fileData []byte
+	var resolvedPath string
+	readPath := p.FilePath
+	if filepath.IsAbs(readPath) && cfg.outputDir != "" {
+		if rel, relErr := filepath.Rel(cfg.outputDir, readPath); relErr == nil && !strings.HasPrefix(rel, "..") {
+			readPath = rel
+		}
 	}
-
-	resolved, err := confineRead(p.FilePath, cfg.outputDir, cfg.sessionDir)
-	if err != nil {
+	fileData, err = plug.FileRead(readPath, handler.WithReadEncoding("base64"))
+	switch {
+	case err == nil:
+		resolvedPath = p.FilePath
+	case cfg.sessionDir != "":
+		resolved, readErr := confineRead(p.FilePath, cfg.sessionDir)
+		if readErr != nil {
+			return nil, &handler.Error{Code: "validation_error", Message: "file_path: " + readErr.Error()}
+		}
+		resolvedPath = resolved
+		fileData, readErr = os.ReadFile(resolved) //nolint:gosec // path validated by confineRead
+		if readErr != nil {
+			return nil, fmt.Errorf("read file: %w", readErr)
+		}
+	default:
 		return nil, &handler.Error{Code: "validation_error", Message: "file_path: " + err.Error()}
 	}
 
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return nil, fmt.Errorf("stat file: %w", err)
-	}
-	if info.Size() > int64(maxAttachBytes) {
+	if len(fileData) > maxAttachBytes {
 		return nil, &handler.Error{
 			Code:    "too_large",
-			Message: fmt.Sprintf("file exceeds %dMB limit (%d bytes)", maxAttachMB, info.Size()),
+			Message: fmt.Sprintf("file exceeds %dMB limit (%d bytes)", maxAttachMB, len(fileData)),
 		}
 	}
 
@@ -365,7 +382,7 @@ func toolAddAttachment(params, _ json.RawMessage) (any, error) {
 
 	body := map[string]any{
 		"ids":          []int{bugID},
-		"file_name":    filepath.Base(resolved),
+		"file_name":    filepath.Base(resolvedPath),
 		"summary":      p.Summary,
 		"content_type": p.ContentType,
 		"is_private":   p.IsPrivate,
@@ -375,20 +392,9 @@ func toolAddAttachment(params, _ json.RawMessage) (any, error) {
 
 	if isDryRun(p.DryRun) {
 		preview := dryRunPreview("POST", path, body)
-		preview["file_path"] = resolved
-		preview["file_size"] = info.Size()
+		preview["file_path"] = resolvedPath
+		preview["file_size"] = len(fileData)
 		return preview, nil
-	}
-
-	fileData, err := os.ReadFile(resolved) //nolint:gosec // path validated by confineRead
-	if err != nil {
-		return nil, fmt.Errorf("read file: %w", err)
-	}
-	if len(fileData) > maxAttachBytes {
-		return nil, &handler.Error{
-			Code:    "too_large",
-			Message: fmt.Sprintf("file exceeds %dMB limit (%d bytes)", maxAttachMB, len(fileData)),
-		}
 	}
 
 	body["data"] = base64Encode(string(fileData))

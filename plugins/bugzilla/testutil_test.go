@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -192,6 +193,63 @@ func (b *mockBridge) expectFileWrite(resultPath string) handler.Message {
 	}
 	_, _ = fmt.Fprintf(b.out, "%s\n", data)
 	return req
+}
+
+func (b *mockBridge) expectFileRead(content []byte) {
+	b.t.Helper()
+	if !b.in.Scan() {
+		b.t.Fatal("bridge: expected file_read request, got EOF")
+	}
+	var req handler.Message
+	if err := json.Unmarshal(b.in.Bytes(), &req); err != nil {
+		b.t.Fatalf("bridge: unmarshal request: %v", err)
+	}
+	if req.Type != handler.TypeFileRead {
+		b.t.Fatalf("bridge: expected file_read, got %s", req.Type)
+	}
+
+	// If the SDK requested base64 encoding, encode the content.
+	respContent := string(content)
+	if req.BodyEncoding == "base64" {
+		respContent = base64.StdEncoding.EncodeToString(content)
+	}
+
+	resp := handler.Message{
+		ID:      req.ID,
+		Type:    handler.TypeFileReadResponse,
+		Content: respContent,
+		Path:    "/mock/read/" + req.Path,
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		b.t.Fatalf("bridge: marshal response: %v", err)
+	}
+	_, _ = fmt.Fprintf(b.out, "%s\n", data)
+}
+
+func (b *mockBridge) expectFileReadError(errMsg string) {
+	b.t.Helper()
+	if !b.in.Scan() {
+		b.t.Fatal("bridge: expected file_read request, got EOF")
+	}
+	var req handler.Message
+	if err := json.Unmarshal(b.in.Bytes(), &req); err != nil {
+		b.t.Fatalf("bridge: unmarshal request: %v", err)
+	}
+
+	resp := handler.Message{
+		ID:   req.ID,
+		Type: handler.TypeFileReadResponse,
+		Error: &handler.Error{
+			Code:    "fileio_error",
+			Message: errMsg,
+		},
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		b.t.Fatalf("bridge: marshal response: %v", err)
+	}
+	_, _ = fmt.Fprintf(b.out, "%s\n", data)
 }
 
 func collectResult(t *testing.T, ch <-chan toolResult) toolResult {
