@@ -515,9 +515,13 @@ func (p *Proxy) resolveURL(pluginName string, pa *PluginAuth, req protocol.Messa
 		return "", fmt.Errorf("HTTPS required when client certificates are configured")
 	}
 
-	// Header-based auth requires HTTPS unless no_auth
+	// HTTPS is always required when auth is configured, even with
+	// no_auth. The plugin's credential provider is active and HTTP
+	// requests could leak ambient cookies or be intercepted. Plugins
+	// needing HTTP for unauthenticated endpoints should be configured
+	// without auth.
 	hasHeaderAuth := pa.Provider != nil || pa.IsKerberos
-	if hasHeaderAuth && !req.NoAuth && parsed.Scheme != "https" {
+	if hasHeaderAuth && parsed.Scheme != "https" {
 		return "", fmt.Errorf("HTTPS required when auth is configured")
 	}
 

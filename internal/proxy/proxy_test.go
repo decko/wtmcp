@@ -1163,7 +1163,7 @@ func TestNoAuthSkipsAuthInjection(t *testing.T) {
 	}
 }
 
-func TestNoAuthAllowsHTTPWithHeaderAuth(t *testing.T) {
+func TestNoAuthBlocksHTTPWhenAuthConfigured(t *testing.T) {
 	p := newTestProxy(nil)
 	pa := testPluginAuth("https://api.example.com")
 	pa.Provider, _ = auth.NewBearerProvider("token", "", "")
@@ -1177,9 +1177,54 @@ func TestNoAuthAllowsHTTPWithHeaderAuth(t *testing.T) {
 		NoAuth: true,
 	})
 
-	// Should not get "HTTPS required" — transport error expected (no server)
+	if resp.Error == nil || !strings.Contains(resp.Error.Message, "HTTPS required") {
+		t.Errorf("no_auth with auth configured should still require HTTPS, got %v", resp.Error)
+	}
+}
+
+func TestNoAuthAllowsHTTPSWhenAuthConfigured(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Error("no_auth request should not have Authorization header")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	p := newTestProxy(srv.Client())
+	pa := testPluginAuth(srv.URL)
+	pa.Provider, _ = auth.NewBearerProvider("token", "", "")
+	p.RegisterPlugin("test", pa)
+
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID:     "req-https-noauth",
+		Type:   protocol.TypeHTTPRequest,
+		Method: "GET",
+		Path:   "/public",
+		NoAuth: true,
+	})
+
+	if resp.Error != nil {
+		t.Errorf("no_auth over HTTPS should succeed, got error: %v", resp.Error)
+	}
+}
+
+func TestNoAuthWithoutProviderAllowsHTTP(t *testing.T) {
+	p := newTestProxy(nil)
+	pa := testPluginAuth("http://api.example.com")
+	p.RegisterPlugin("test", pa)
+
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID:     "req-http-noprovider",
+		Type:   protocol.TypeHTTPRequest,
+		Method: "GET",
+		URL:    "http://api.example.com/public",
+	})
+
+	// No provider configured — HTTP should be allowed (transport error, not HTTPS error)
 	if resp.Error != nil && strings.Contains(resp.Error.Message, "HTTPS required") {
-		t.Error("no_auth should bypass HTTPS enforcement for header auth")
+		t.Error("no auth provider should allow HTTP")
 	}
 }
 
@@ -1218,6 +1263,25 @@ func TestHTTPSRequiredWithClientCertNoAuth(t *testing.T) {
 
 	if resp.Error == nil || !strings.Contains(resp.Error.Message, "HTTPS required when client certificates") {
 		t.Errorf("no_auth should NOT bypass mTLS HTTPS, got %v", resp.Error)
+	}
+}
+
+func TestHTTPSRequiredWithKerberos(t *testing.T) {
+	p := newTestProxy(nil)
+	pa := testPluginAuth("https://internal.corp.com")
+	pa.IsKerberos = true
+	pa.Client = &http.Client{}
+	p.RegisterPlugin("test", pa)
+
+	resp := p.Execute(context.Background(), "test", protocol.Message{
+		ID:     "req-krb-http",
+		Type:   protocol.TypeHTTPRequest,
+		Method: "GET",
+		URL:    "http://internal.corp.com/api",
+	})
+
+	if resp.Error == nil || !strings.Contains(resp.Error.Message, "HTTPS required") {
+		t.Errorf("Kerberos plugin should require HTTPS, got %v", resp.Error)
 	}
 }
 
