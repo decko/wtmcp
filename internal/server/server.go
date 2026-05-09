@@ -332,9 +332,16 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 				return mcp.NewToolResultError(outputText), nil
 			}
 
-			// Process post-tool actions in background
+			// Process post-tool actions in background with a bounded
+			// context to prevent goroutine leaks from hanging plugins.
+			// Uses context.Background() intentionally: the goroutine
+			// outlives the request and needs its own lifecycle.
 			if len(callResult.Actions) > 0 {
-				go processToolActions(srv, mgr, plugName, callResult.Actions, collector)
+				go func() { //nolint:gosec // G118: intentional — goroutine outlives request
+					actCtx, actCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer actCancel()
+					processToolActions(actCtx, srv, mgr, plugName, callResult.Actions, collector)
+				}()
 			}
 
 			// Apply output encoding (JSON passthrough or TOON)
@@ -746,11 +753,11 @@ func registerPluginContextResources(srv *mcpserver.MCPServer, manifest *plugin.M
 }
 
 // processToolActions handles side effects declared in tool results.
-func processToolActions(srv *mcpserver.MCPServer, mgr *plugin.Manager, pluginName string, actions []protocol.Action, collector *stats.Collector) {
+func processToolActions(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Manager, pluginName string, actions []protocol.Action, collector *stats.Collector) {
 	for _, action := range actions {
 		switch action.Type {
 		case "invalidate_resources":
-			invalidatePluginResources(srv, mgr, pluginName, collector)
+			invalidatePluginResources(ctx, srv, mgr, pluginName, collector)
 		default:
 			log.Printf("[%s] unknown tool action: %s", pluginName, action.Type)
 		}
@@ -759,7 +766,7 @@ func processToolActions(srv *mcpserver.MCPServer, mgr *plugin.Manager, pluginNam
 
 // invalidatePluginResources re-queries a resource provider and updates
 // MCP registrations by diffing old vs new resource URIs.
-func invalidatePluginResources(srv *mcpserver.MCPServer, mgr *plugin.Manager, pluginName string, collector *stats.Collector) {
+func invalidatePluginResources(ctx context.Context, srv *mcpserver.MCPServer, mgr *plugin.Manager, pluginName string, collector *stats.Collector) {
 	manifest, ok := mgr.Manifests()[pluginName]
 	if !ok || !manifest.ProvidesResources() {
 		return
@@ -775,7 +782,7 @@ func invalidatePluginResources(srv *mcpserver.MCPServer, mgr *plugin.Manager, pl
 		oldURIs[r.URI] = true
 	}
 
-	newResources, err := handle.ListResources(context.Background())
+	newResources, err := handle.ListResources(ctx)
 	if err != nil {
 		log.Printf("[%s] invalidate_resources failed: %v", pluginName, err)
 		return
