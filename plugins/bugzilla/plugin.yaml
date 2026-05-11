@@ -163,6 +163,7 @@ tools:
 
   - name: bugzilla_download_attachment
     access: read
+    local_write: true
     description: >
       Download an attachment by ID and save to the output directory.
       Returns the local file path. Maximum attachment size: 6MB.

@@ -60,6 +60,7 @@ tools:
 
   - name: drive_export_google_doc_text
     access: read
+    local_write: true
     description: "Export a Google Doc as plain text (saves to file by default)"
     params:
       file_id:
@@ -78,6 +79,7 @@ tools:
 
   - name: drive_export_google_sheet_csv
     access: read
+    local_write: true
     description: "Export first worksheet of a Google Sheet as CSV (saves to file by default)"
     params:
       file_id:
@@ -101,6 +103,7 @@ tools:
 
   - name: drive_export_google_doc_markdown
     access: read
+    local_write: true
     visibility: primary
     description: "Export a Google Doc as text and save locally"
     params:

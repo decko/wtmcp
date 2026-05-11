@@ -33,6 +33,7 @@ tools:
 
   - name: gdocs_get_document_text
     access: read
+    local_write: true
     description: "Get a Google Doc as plain text content"
     params:
       document_id_or_url:
@@ -49,6 +50,7 @@ tools:
 
   - name: gdocs_get_document_markdown
     access: read
+    local_write: true
     visibility: primary
     description: "Get a Google Doc converted to Markdown format"
     params:

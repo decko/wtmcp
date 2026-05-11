@@ -54,6 +54,7 @@ tools:
 
   - name: gmail_fetch_and_cache
     access: read
+    local_write: true
     description: "Fetch messages and cache locally for processing"
     params:
       query:

@@ -724,6 +724,7 @@ tools:
 
   - name: jira_export_sprint_data
     access: read
+    local_write: true
     description: >
       Export all issues for a sprint to a local JSON file.
     params:
@@ -740,6 +741,7 @@ tools:
 
   - name: jira_export_board_sprints
     access: read
+    local_write: true
     description: >
       Export all sprints for a board to a local JSON file.
     params:
@@ -755,6 +757,7 @@ tools:
 
   - name: jira_export_sprint_report
     access: read
+    local_write: true
     description: >
       Export sprint report to a local JSON file (Server/DC only).
     params:
