@@ -23,6 +23,22 @@ func ToolAccessFromContext(ctx context.Context) string {
 	return ""
 }
 
+type localWriteKey struct{}
+
+// WithLocalWrite attaches the tool's local_write permission to the
+// context. When true, access: read tools can issue file_write
+// operations to the plugin's output directory.
+func WithLocalWrite(ctx context.Context, localWrite bool) context.Context {
+	return context.WithValue(ctx, localWriteKey{}, localWrite)
+}
+
+// LocalWriteFromContext extracts the local_write permission.
+// Returns false if not set.
+func LocalWriteFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(localWriteKey{}).(bool)
+	return v
+}
+
 var readOnlyMethods = map[string]bool{
 	http.MethodGet:     true,
 	http.MethodHead:    true,

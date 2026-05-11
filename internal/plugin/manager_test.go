@@ -1609,18 +1609,22 @@ func TestHandleFileIOAccessControl(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		access   string
-		msgType  string
-		path     string
-		content  string
-		wantErr  bool
-		wantCode string
+		name       string
+		access     string
+		localWrite bool
+		msgType    string
+		path       string
+		content    string
+		wantErr    bool
+		wantCode   string
 	}{
-		{"read+file_write=blocked", "read", protocol.TypeFileWrite, "out.txt", "data", true, "fileio_error"},
-		{"read+file_read=allowed", "read", protocol.TypeFileRead, "existing.txt", "", false, ""},
-		{"write+file_write=allowed", "write", protocol.TypeFileWrite, "out2.txt", "data", false, ""},
-		{"empty+file_write=allowed", "", protocol.TypeFileWrite, "out3.txt", "data", false, ""},
+		{"read+file_write=blocked", "read", false, protocol.TypeFileWrite, "out.txt", "data", true, "fileio_error"},
+		{"read+file_read=allowed", "read", false, protocol.TypeFileRead, "existing.txt", "", false, ""},
+		{"write+file_write=allowed", "write", false, protocol.TypeFileWrite, "out2.txt", "data", false, ""},
+		{"empty+file_write=allowed", "", false, protocol.TypeFileWrite, "out3.txt", "data", false, ""},
+		{"read+localwrite+file_write=allowed", "read", true, protocol.TypeFileWrite, "out4.txt", "data", false, ""},
+		{"read+localwrite+file_read=allowed", "read", true, protocol.TypeFileRead, "existing.txt", "", false, ""},
+		{"read+nolocalwrite+file_write=blocked", "read", false, protocol.TypeFileWrite, "out5.txt", "data", true, "fileio_error"},
 	}
 
 	for _, tt := range tests {
@@ -1628,6 +1632,9 @@ func TestHandleFileIOAccessControl(t *testing.T) {
 			ctx := context.Background()
 			if tt.access != "" {
 				ctx = proxy.WithToolAccess(ctx, tt.access)
+			}
+			if tt.localWrite {
+				ctx = proxy.WithLocalWrite(ctx, true)
 			}
 
 			resp := handler.HandleFileIO(ctx, "test-plugin", protocol.Message{

@@ -175,8 +175,9 @@ type SetupVariant struct {
 type ToolDef struct {
 	Name        string              `yaml:"name"`
 	Description string              `yaml:"description"`
-	Access      string              `yaml:"access"`     // "read" or "write" (default: "write")
-	Visibility  string              `yaml:"visibility"` // "primary" or "deferred" (default: "deferred")
+	Access      string              `yaml:"access"`      // "read" or "write" (default: "write")
+	LocalWrite  bool                `yaml:"local_write"` // allow file_write for access: read tools
+	Visibility  string              `yaml:"visibility"`  // "primary" or "deferred" (default: "deferred")
 	Params      map[string]ParamDef `yaml:"params"`
 }
 
@@ -515,6 +516,9 @@ func (m *Manifest) Validate() error {
 		}
 		if tool.Access != "" && tool.Access != "read" && tool.Access != "write" {
 			return fmt.Errorf("tool %s: access must be 'read' or 'write', got %q", tool.Name, tool.Access)
+		}
+		if tool.LocalWrite && tool.Access != "read" {
+			return fmt.Errorf("tool %s: local_write requires access: read", tool.Name)
 		}
 		if tool.Visibility != "" && tool.Visibility != "primary" && tool.Visibility != "deferred" {
 			return fmt.Errorf("tool %s: visibility must be 'primary' or 'deferred', got %q", tool.Name, tool.Visibility)

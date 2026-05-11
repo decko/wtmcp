@@ -683,6 +683,13 @@ func TestToolDefAccess(t *testing.T) {
 	}
 }
 
+func TestToolDefLocalWrite(t *testing.T) {
+	readLW := ToolDef{Name: "export", Access: "read", LocalWrite: true}
+	if !readLW.IsReadOnly() {
+		t.Error("access=read + local_write=true should still be read-only")
+	}
+}
+
 func TestManifestValidateConcurrencyMixedAccess(t *testing.T) {
 	base := func(concurrency int, access1, access2 string) *Manifest {
 		return &Manifest{
@@ -744,6 +751,39 @@ func TestManifestValidateConcurrencyMixedLocalWrite(t *testing.T) {
 
 	if err := base(false, false).Validate(); err != nil {
 		t.Errorf("concurrency=2 with uniform local_write=false should pass: %v", err)
+	}
+}
+
+func TestManifestValidateLocalWrite(t *testing.T) {
+	base := func(access string, localWrite bool) *Manifest {
+		return &Manifest{
+			Name:      "test",
+			Handler:   "handler",
+			Execution: "oneshot",
+			Dir:       t.TempDir(),
+			Tools: []ToolDef{{
+				Name:        "t",
+				Description: "d",
+				Access:      access,
+				LocalWrite:  localWrite,
+			}},
+		}
+	}
+
+	if err := base("read", true).Validate(); err != nil {
+		t.Errorf("access=read + local_write=true should pass: %v", err)
+	}
+	if err := base("read", false).Validate(); err != nil {
+		t.Errorf("access=read + local_write=false should pass: %v", err)
+	}
+	if err := base("write", true).Validate(); err == nil {
+		t.Error("access=write + local_write=true should fail")
+	}
+	if err := base("", true).Validate(); err == nil {
+		t.Error("access='' + local_write=true should fail")
+	}
+	if err := base("write", false).Validate(); err != nil {
+		t.Errorf("access=write + local_write=false should pass: %v", err)
 	}
 }
 

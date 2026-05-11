@@ -26,22 +26,28 @@ func TestToolAccessContext(t *testing.T) {
 
 func TestReadOnlyAccessEnforcement(t *testing.T) {
 	tests := []struct {
-		name      string
-		access    string
-		method    string
-		wantBlock bool
+		name       string
+		access     string
+		localWrite bool
+		method     string
+		wantBlock  bool
 	}{
-		{"read+GET=allowed", "read", "GET", false},
-		{"read+HEAD=allowed", "read", "HEAD", false},
-		{"read+OPTIONS=allowed", "read", "OPTIONS", false},
-		{"read+POST=blocked", "read", "POST", true},
-		{"read+PUT=blocked", "read", "PUT", true},
-		{"read+DELETE=blocked", "read", "DELETE", true},
-		{"read+PATCH=blocked", "read", "PATCH", true},
-		{"write+POST=allowed", "write", "POST", false},
-		{"write+DELETE=allowed", "write", "DELETE", false},
-		{"empty+POST=allowed", "", "POST", false},
-		{"empty+GET=allowed", "", "GET", false},
+		{"read+GET=allowed", "read", false, "GET", false},
+		{"read+HEAD=allowed", "read", false, "HEAD", false},
+		{"read+OPTIONS=allowed", "read", false, "OPTIONS", false},
+		{"read+POST=blocked", "read", false, "POST", true},
+		{"read+PUT=blocked", "read", false, "PUT", true},
+		{"read+DELETE=blocked", "read", false, "DELETE", true},
+		{"read+PATCH=blocked", "read", false, "PATCH", true},
+		{"write+POST=allowed", "write", false, "POST", false},
+		{"write+DELETE=allowed", "write", false, "DELETE", false},
+		{"empty+POST=allowed", "", false, "POST", false},
+		{"empty+GET=allowed", "", false, "GET", false},
+		{"read+localwrite+POST=blocked", "read", true, "POST", true},
+		{"read+localwrite+PUT=blocked", "read", true, "PUT", true},
+		{"read+localwrite+DELETE=blocked", "read", true, "DELETE", true},
+		{"read+localwrite+PATCH=blocked", "read", true, "PATCH", true},
+		{"read+localwrite+GET=allowed", "read", true, "GET", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -49,12 +55,33 @@ func TestReadOnlyAccessEnforcement(t *testing.T) {
 			if tt.access != "" {
 				ctx = WithToolAccess(ctx, tt.access)
 			}
+			if tt.localWrite {
+				ctx = WithLocalWrite(ctx, true)
+			}
 			access := ToolAccessFromContext(ctx)
 			blocked := access == "read" && !isReadOnlyMethod(tt.method)
 			if blocked != tt.wantBlock {
-				t.Errorf("access=%q method=%q: blocked=%v, want %v", tt.access, tt.method, blocked, tt.wantBlock)
+				t.Errorf("access=%q localWrite=%v method=%q: blocked=%v, want %v",
+					tt.access, tt.localWrite, tt.method, blocked, tt.wantBlock)
 			}
 		})
+	}
+}
+
+func TestLocalWriteContext(t *testing.T) {
+	ctx := context.Background()
+	if LocalWriteFromContext(ctx) {
+		t.Error("empty context should return false")
+	}
+
+	ctx = WithLocalWrite(ctx, true)
+	if !LocalWriteFromContext(ctx) {
+		t.Error("expected true after WithLocalWrite(true)")
+	}
+
+	ctx = WithLocalWrite(ctx, false)
+	if LocalWriteFromContext(ctx) {
+		t.Error("expected false after WithLocalWrite(false)")
 	}
 }
 

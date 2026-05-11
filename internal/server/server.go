@@ -182,6 +182,7 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 		fallback := deps.cfg.Output.ToonFallback
 		isRead := toolDef.IsReadOnly()
 		toolAccess := toolDef.Access
+		localWrite := toolDef.LocalWrite
 
 		srv := deps.srv
 		mgr := deps.mgr
@@ -212,6 +213,9 @@ func registerPluginTools(deps *serverDeps, manifest *plugin.Manifest) {
 			ctx = audit.WithCorrelationID(ctx)
 			if toolAccess != "" {
 				ctx = proxy.WithToolAccess(ctx, toolAccess)
+			}
+			if localWrite {
+				ctx = proxy.WithLocalWrite(ctx, true)
 			}
 			start := time.Now()
 			var inputRaw []byte
@@ -377,6 +381,12 @@ func buildMCPTool(def plugin.ToolDef, progressive bool) (mcp.Tool, []byte) {
 		tool.DeferLoading = true
 	}
 
+	// ReadOnlyHint means "read-only w.r.t. the remote API." Tools with
+	// local_write: true can write to the sandboxed output directory but
+	// do not modify external state. We keep ReadOnlyHint=true for these
+	// tools because the hint influences LLM tool selection and
+	// elicitation -- marking them as destructive would degrade UX for
+	// what users perceive as safe read operations.
 	if def.IsReadOnly() {
 		t := true
 		tool.Annotations.ReadOnlyHint = &t

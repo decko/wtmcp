@@ -1691,7 +1691,7 @@ func (s *serviceHandlerImpl) HandleFileIO(ctx context.Context, pluginName string
 
 	switch req.Type {
 	case protocol.TypeFileWrite:
-		if access := proxy.ToolAccessFromContext(ctx); access == "read" {
+		if access := proxy.ToolAccessFromContext(ctx); access == "read" && !proxy.LocalWriteFromContext(ctx) {
 			return fileIOError(req.ID, req.Type, "read-only tool cannot write files")
 		}
 		writeReq := fileio.WriteRequest{
