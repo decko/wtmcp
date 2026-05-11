@@ -1552,9 +1552,9 @@ func TestHandleCacheAccessControl(t *testing.T) {
 		wantErr  bool
 		wantCode string
 	}{
-		{"read+cache_set=blocked", "read", protocol.TypeCacheSet, true, "cache_error"},
-		{"read+cache_del=blocked", "read", protocol.TypeCacheDel, true, "cache_error"},
-		{"read+cache_flush=blocked", "read", protocol.TypeCacheFlush, true, "cache_error"},
+		{"read+cache_set=allowed", "read", protocol.TypeCacheSet, false, ""},
+		{"read+cache_del=allowed", "read", protocol.TypeCacheDel, false, ""},
+		{"read+cache_flush=allowed", "read", protocol.TypeCacheFlush, false, ""},
 		{"read+cache_get=allowed", "read", protocol.TypeCacheGet, false, ""},
 		{"read+cache_list=allowed", "read", protocol.TypeCacheList, false, ""},
 		{"write+cache_set=allowed", "write", protocol.TypeCacheSet, false, ""},

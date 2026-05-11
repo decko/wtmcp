@@ -1630,9 +1630,6 @@ func (s *serviceHandlerImpl) HandleCache(ctx context.Context, pluginName string,
 		return resp
 
 	case protocol.TypeCacheSet:
-		if access := proxy.ToolAccessFromContext(ctx); access == "read" {
-			return cacheError(req.ID, req.Type, fmt.Errorf("read-only tool cannot modify cache"))
-		}
 		if err := cache.ValidateKey(req.Key); err != nil {
 			return cacheError(req.ID, req.Type, err)
 		}
@@ -1649,9 +1646,6 @@ func (s *serviceHandlerImpl) HandleCache(ctx context.Context, pluginName string,
 		return resp
 
 	case protocol.TypeCacheDel:
-		if access := proxy.ToolAccessFromContext(ctx); access == "read" {
-			return cacheError(req.ID, req.Type, fmt.Errorf("read-only tool cannot modify cache"))
-		}
 		if err := cache.ValidateKey(req.Key); err != nil {
 			return cacheError(req.ID, req.Type, err)
 		}
@@ -1670,9 +1664,8 @@ func (s *serviceHandlerImpl) HandleCache(ctx context.Context, pluginName string,
 		return protocol.Message{ID: req.ID, Type: protocol.TypeCacheList, Keys: keys}
 
 	case protocol.TypeCacheFlush:
-		if access := proxy.ToolAccessFromContext(ctx); access == "read" {
-			return cacheError(req.ID, req.Type, fmt.Errorf("read-only tool cannot modify cache"))
-		}
+		// Namespace is intentionally hardcoded to pluginName (not
+		// CacheNamespace()) for security isolation between plugins.
 		count, err := s.cache.Flush(ctx, namespace)
 		if err != nil {
 			return cacheError(req.ID, req.Type, err)
