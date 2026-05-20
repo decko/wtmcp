@@ -194,6 +194,13 @@ func TestIsDomainAllowedForSSO(t *testing.T) {
 			allowedDomains: nil,
 			want:           false,
 		},
+		{
+			name:           "userinfo rejected",
+			rawURL:         "https://evil@idp.example.com/saml",
+			baseURL:        "https://jenkins.example.com",
+			allowedDomains: []string{"idp.example.com"},
+			want:           false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

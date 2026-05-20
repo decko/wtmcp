@@ -126,7 +126,7 @@ func resolveRelativeURL(rawURL, baseURL string) string {
 // or the plugin's base URL host. Requires HTTPS.
 func isDomainAllowedForSSO(rawURL string, baseURL string, allowedDomains []string) bool {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Scheme != "https" {
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil {
 		return false
 	}
 	host := parsed.Hostname()
@@ -159,6 +159,18 @@ func safeRedirectClient(client *http.Client, baseURL string, allowedDomains []st
 		}
 		if !isDomainAllowedForSSO(req.URL.String(), baseURL, allowedDomains) {
 			return http.ErrUseLastResponse
+		}
+		if len(via) > 0 {
+			origHost := via[0].URL.Hostname()
+			newHost := req.URL.Hostname()
+			origNorm, err1 := domaincheck.Normalize(origHost)
+			newNorm, err2 := domaincheck.Normalize(newHost)
+			if err1 != nil || err2 != nil || origNorm != newNorm {
+				req.Header.Del("Authorization")
+				req.Header.Del("Cookie")
+				req.Header.Del("Private-Token")
+				req.Header.Del("X-Api-Key")
+			}
 		}
 		return nil
 	}
