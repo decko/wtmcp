@@ -482,3 +482,70 @@ func TestToolMyIssues(t *testing.T) {
 		t.Errorf("title = %v", issues[0]["title"])
 	}
 }
+
+func TestToolGetMergeRequest(t *testing.T) {
+	setupGitLabTest(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/merge_requests/42/notes") {
+			jsonResponse(w, `[{"id":1,"author":{"username":"alice"},"body":"LGTM","system":false,"resolvable":false,"resolved":false}]`)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/merge_requests/42") {
+			jsonResponse(w, `{
+				"iid":42,"title":"Add feature","description":"Adds feature X",
+				"state":"opened","sha":"def456",
+				"author":{"username":"alice"},
+				"source_branch":"feat","target_branch":"main",
+				"web_url":"https://gitlab.example.com/proj/-/merge_requests/42",
+				"detailed_merge_status":"mergeable",
+				"draft":false,
+				"diff_refs":{"base_sha":"aaa111","head_sha":"bbb222","start_sha":"ccc333"}
+			}`)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	result, err := toolGetMergeRequest(mustJSON(t, map[string]any{
+		"project_id": "team/proj",
+		"mr_iid":     42,
+	}), nil)
+	if err != nil {
+		t.Fatalf("toolGetMergeRequest: %v", err)
+	}
+
+	m := result.(map[string]any)
+	if m["iid"] != int64(42) {
+		t.Errorf("iid = %v", m["iid"])
+	}
+	if m["title"] != "Add feature" {
+		t.Errorf("title = %v", m["title"])
+	}
+	if m["sha"] != "def456" {
+		t.Errorf("sha = %v, want def456", m["sha"])
+	}
+
+	refs, ok := m["diff_refs"].(map[string]string)
+	if !ok {
+		t.Fatalf("diff_refs type = %T, want map[string]string", m["diff_refs"])
+	}
+	if refs["base_sha"] != "aaa111" {
+		t.Errorf("base_sha = %v", refs["base_sha"])
+	}
+	if refs["head_sha"] != "bbb222" {
+		t.Errorf("head_sha = %v", refs["head_sha"])
+	}
+	if refs["start_sha"] != "ccc333" {
+		t.Errorf("start_sha = %v", refs["start_sha"])
+	}
+
+	comments, ok := m["comments"].([]map[string]any)
+	if !ok {
+		t.Fatalf("comments type = %T", m["comments"])
+	}
+	if len(comments) != 1 {
+		t.Fatalf("got %d comments, want 1", len(comments))
+	}
+	if comments[0]["body"] != "LGTM" {
+		t.Errorf("comment body = %v", comments[0]["body"])
+	}
+}

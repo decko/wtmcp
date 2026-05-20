@@ -228,10 +228,19 @@ func toolGetMergeRequest(params, _ json.RawMessage) (any, error) {
 		"target_branch": mr.TargetBranch,
 		"web_url":       mr.WebURL,
 		"merge_status":  mr.DetailedMergeStatus,
+		"sha":           mr.SHA,
 		"created_at":    timeStr(mr.CreatedAt),
 		"updated_at":    timeStr(mr.UpdatedAt),
 		"draft":         mr.Draft,
 		"comments":      comments,
+	}
+
+	if mr.DiffRefs.BaseSha != "" {
+		result["diff_refs"] = map[string]string{
+			"base_sha":  mr.DiffRefs.BaseSha,
+			"head_sha":  mr.DiffRefs.HeadSha,
+			"start_sha": mr.DiffRefs.StartSha,
+		}
 	}
 
 	// Only fetch diffs when explicitly requested
