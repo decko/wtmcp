@@ -638,6 +638,80 @@ func TestParseSAMLFormReversedAttributes(t *testing.T) {
 	}
 }
 
+func TestParseSAMLFormMultipleForms(t *testing.T) {
+	t.Run("second form SAMLResponse does not overwrite first", func(t *testing.T) {
+		body := `<html>
+		<form action="https://sp.example.com/acs">
+			<input type="hidden" name="SAMLResponse" value="legit"/>
+			<input type="hidden" name="RelayState" value="/"/>
+		</form>
+		<form action="https://other.example.com/feedback">
+			<input type="hidden" name="SAMLResponse" value="overwritten"/>
+			<input type="hidden" name="csrf" value="tok"/>
+		</form></html>`
+		action, formData, ok := parseSAMLForm([]byte(body), "")
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if action != "https://sp.example.com/acs" {
+			t.Errorf("action = %q, want first form's action", action)
+		}
+		if formData.Get("SAMLResponse") != "legit" {
+			t.Errorf("SAMLResponse = %q, want legit (first form's value)", formData.Get("SAMLResponse"))
+		}
+		if formData.Get("csrf") != "" {
+			t.Error("csrf from second form should not be collected")
+		}
+	})
+
+	t.Run("input after closing form tag is excluded", func(t *testing.T) {
+		body := `<html>
+		<form action="https://sp.example.com/acs">
+			<input type="hidden" name="SAMLResponse" value="legit"/>
+		</form>
+		<input type="hidden" name="injected" value="evil"/>
+		</html>`
+		_, formData, ok := parseSAMLForm([]byte(body), "")
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if formData.Get("injected") != "" {
+			t.Error("input outside form should not be collected")
+		}
+	})
+
+	t.Run("first form without action returns ok=false", func(t *testing.T) {
+		body := `<html>
+		<form>
+			<input type="hidden" name="SAMLResponse" value="data"/>
+		</form>
+		<form action="https://sp.example.com/acs">
+			<input type="hidden" name="SAMLResponse" value="data2"/>
+		</form></html>`
+		_, _, ok := parseSAMLForm([]byte(body), "")
+		if ok {
+			t.Error("expected ok=false when first form has no action")
+		}
+	})
+
+	t.Run("action comes from first form only", func(t *testing.T) {
+		body := `<html>
+		<form action="https://first.example.com/acs">
+			<input type="hidden" name="SAMLResponse" value="data"/>
+		</form>
+		<form action="https://second.example.com/acs">
+			<input type="hidden" name="Other" value="val"/>
+		</form></html>`
+		action, _, ok := parseSAMLForm([]byte(body), "")
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if action != "https://first.example.com/acs" {
+			t.Errorf("action = %q, want first form's action", action)
+		}
+	})
+}
+
 func TestParseSAMLFormRelativeAction(t *testing.T) {
 	// F8: relative action URL resolved against baseURL
 	body := `<html><form action="/saml/consume">

@@ -68,12 +68,22 @@ func extractRedirectURL(body []byte, baseURL string) string {
 func parseSAMLForm(body []byte, baseURL string) (action string, formData url.Values, ok bool) {
 	z := html.NewTokenizer(bytes.NewReader(body))
 	formData = url.Values{}
+	var inForm, seenForm bool
 
 	for {
 		tt := z.Next()
 		if tt == html.ErrorToken {
 			break
 		}
+
+		if tt == html.EndTagToken {
+			tn, _ := z.TagName()
+			if string(tn) == "form" && inForm {
+				inForm = false
+			}
+			continue
+		}
+
 		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
 			continue
 		}
@@ -81,11 +91,16 @@ func parseSAMLForm(body []byte, baseURL string) (action string, formData url.Val
 
 		switch t.Data {
 		case "form":
-			if a := getAttr(t, "action"); a != "" && action == "" {
+			if seenForm {
+				break
+			}
+			seenForm = true
+			if a := getAttr(t, "action"); a != "" {
 				action = resolveRelativeURL(a, baseURL)
+				inForm = true
 			}
 		case "input":
-			if strings.EqualFold(getAttr(t, "type"), "hidden") {
+			if inForm && strings.EqualFold(getAttr(t, "type"), "hidden") {
 				name := getAttr(t, "name")
 				if name != "" {
 					formData.Set(name, getAttr(t, "value"))
@@ -201,7 +216,8 @@ func handleSAMLSSO(ctx context.Context, client *http.Client, body []byte, baseUR
 		return false
 	}
 
-	action, formData, ok := parseSAMLForm(idpBody, baseURL)
+	idpBase := idpResp.Request.URL.String()
+	action, formData, ok := parseSAMLForm(idpBody, idpBase)
 	if !ok {
 		log.Printf("proxy: saml: could not parse SAML form from IdP response")
 		return false
@@ -247,7 +263,7 @@ func (p *Proxy) trySAMLSSO(ctx context.Context, pa *PluginAuth, resp *http.Respo
 		return resp
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, p.maxBodySize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, samlInitBodyLimit))
 	resp.Body.Close() //nolint:errcheck,gosec
 	if err != nil {
 		resp.Body = io.NopCloser(bytes.NewReader(body))
@@ -298,6 +314,10 @@ func InitSAMLSession(ctx context.Context, client *http.Client, initURL, baseURL 
 		fullURL = strings.TrimRight(baseURL, "/") + initURL
 	}
 
+	if !isDomainAllowedForSSO(fullURL, baseURL, allowedDomains) {
+		return fmt.Errorf("saml_init URL %q not in allowed domains", fullURL)
+	}
+
 	safeClient := safeRedirectClient(client, baseURL, allowedDomains)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", fullURL, nil)
@@ -315,7 +335,8 @@ func InitSAMLSession(ctx context.Context, client *http.Client, initURL, baseURL 
 		return fmt.Errorf("read response from %s: %w", fullURL, err)
 	}
 
-	action, formData, ok := parseSAMLForm(body, baseURL)
+	respBase := resp.Request.URL.String()
+	action, formData, ok := parseSAMLForm(body, respBase)
 	if ok && formData.Get("SAMLRequest") != "" {
 		return followSAMLFormChain(ctx, client, action, formData, baseURL, allowedDomains)
 	}
@@ -354,7 +375,8 @@ func followSAMLFormChain(ctx context.Context, client *http.Client, idpURL string
 		return fmt.Errorf("read IdP response: %w", err)
 	}
 
-	respAction, respFormData, ok := parseSAMLForm(idpBody, baseURL)
+	idpBase := idpResp.Request.URL.String()
+	respAction, respFormData, ok := parseSAMLForm(idpBody, idpBase)
 	if !ok || respFormData.Get("SAMLResponse") == "" {
 		return fmt.Errorf("no SAMLResponse in IdP response (status %d)", idpResp.StatusCode)
 	}
