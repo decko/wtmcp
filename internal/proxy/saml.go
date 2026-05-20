@@ -51,7 +51,7 @@ func extractRedirectURL(body []byte, baseURL string) string {
 			}
 			content := getAttr(t, "content")
 			if idx := strings.Index(strings.ToLower(content), "url="); idx >= 0 {
-				redirect := strings.TrimSpace(content[idx+4:])
+				redirect := strings.TrimSpace(content[idx+len("url="):])
 				if redirect != "" {
 					return resolveRelativeURL(redirect, baseURL)
 				}
@@ -119,10 +119,15 @@ func parseSAMLForm(body []byte, baseURL string) (action string, formData url.Val
 }
 
 func resolveRelativeURL(rawURL, baseURL string) string {
-	if strings.HasPrefix(rawURL, "/") {
-		return strings.TrimRight(baseURL, "/") + rawURL
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return rawURL
 	}
-	return rawURL
+	ref, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	return base.ResolveReference(ref).String()
 }
 
 // isDomainAllowedForSSO validates that a URL targets an allowed domain
