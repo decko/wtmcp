@@ -91,6 +91,74 @@ func TestExtractRedirectURL(t *testing.T) {
 			baseURL: "https://jenkins.example.com",
 			want:    "",
 		},
+		{
+			name:    "js redirect var redirectUrl single-quoted",
+			body:    `<html><script>var redirectUrl = 'https://example.com/login';</script></html>`,
+			baseURL: "https://app.example.com",
+			want:    "https://example.com/login",
+		},
+		{
+			name:    "js redirect var redirectUrl double-quoted",
+			body:    `<html><script>var redirectUrl = "https://example.com/login";</script></html>`,
+			baseURL: "https://app.example.com",
+			want:    "https://example.com/login",
+		},
+		{
+			name:    "js redirect window.location",
+			body:    `<html><script>window.location = 'https://idp.example.com/sso';</script></html>`,
+			baseURL: "https://app.example.com",
+			want:    "https://idp.example.com/sso",
+		},
+		{
+			name:    "js redirect window.location.href",
+			body:    `<html><script>window.location.href = 'https://idp.example.com/auth';</script></html>`,
+			baseURL: "https://app.example.com",
+			want:    "https://idp.example.com/auth",
+		},
+		{
+			name:    "js redirect relative path",
+			body:    `<html><script>var redirectUrl = '/auth/login';</script></html>`,
+			baseURL: "https://app.example.com",
+			want:    "https://app.example.com/auth/login",
+		},
+		{
+			name:    "js no redirect in script",
+			body:    `<html><script>var x = 42;</script></html>`,
+			baseURL: "https://app.example.com",
+			want:    "",
+		},
+		{
+			name:    "meta refresh takes precedence over js redirect",
+			body:    `<html><meta http-equiv="refresh" content="0;url=https://meta.example.com/login" /><script>var redirectUrl = 'https://js.example.com/login';</script></html>`,
+			baseURL: "https://app.example.com",
+			want:    "https://meta.example.com/login",
+		},
+		{
+			name:    "external script tag ignored",
+			body:    `<html><script src="/app.js"></script><meta http-equiv="refresh" content="0;url=https://example.com/login" /></html>`,
+			baseURL: "https://app.example.com",
+			want:    "https://example.com/login",
+		},
+		{
+			name: "js redirect multi-line script with extra code",
+			body: `
+
+
+<html>
+<body>
+<script type="text/javascript">
+	var redirectUrl = 'https://app.example.com/authgwy/corp/login.htmld?returnTo=%2fcorp%2fd%2ftask%2f1234';
+	var anchor = encodeURIComponent(window.location.hash);
+	if (anchor.length > 0) {
+		redirectUrl = redirectUrl.replace(/([?|&]returnTo=[^\&;]+)/, '$1' + anchor);
+	}
+	window.location = redirectUrl;
+</script>
+</body>
+</html>`,
+			baseURL: "https://app.example.com",
+			want:    "https://app.example.com/authgwy/corp/login.htmld?returnTo=%2fcorp%2fd%2ftask%2f1234",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

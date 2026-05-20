@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -33,7 +34,8 @@ func getAttr(t html.Token, name string) string {
 }
 
 // extractRedirectURL finds a redirect URL in an HTML document, checking
-// meta-refresh tags and data-redirect-url attributes.
+// meta-refresh tags, data-redirect-url attributes, and JavaScript
+// redirect assignments (var redirectUrl = '...' or window.location).
 func extractRedirectURL(body []byte, baseURL string) string {
 	z := html.NewTokenizer(bytes.NewReader(body))
 	for {
@@ -58,11 +60,32 @@ func extractRedirectURL(body []byte, baseURL string) string {
 					return resolveRelativeURL(redirect, baseURL)
 				}
 			}
+		case "script":
+			if next := z.Next(); next == html.TextToken {
+				// Copy z.Text() — the slice is invalidated by the
+				// next z.Next() call in the outer loop.
+				scriptContent := append([]byte(nil), z.Text()...)
+				if redirect := extractJSRedirect(scriptContent); redirect != "" {
+					return resolveRelativeURL(redirect, baseURL)
+				}
+			}
 		default:
 			if redirect := getAttr(t, "data-redirect-url"); redirect != "" {
 				return resolveRelativeURL(redirect, baseURL)
 			}
 		}
+	}
+	return ""
+}
+
+var jsRedirectRe = regexp.MustCompile(
+	`(?:var\s+redirectUrl|window\.location(?:\.href)?)\s*=\s*['"]([^'"]+)['"]`,
+)
+
+func extractJSRedirect(script []byte) string {
+	m := jsRedirectRe.FindSubmatch(script)
+	if m != nil {
+		return string(m[1])
 	}
 	return ""
 }
