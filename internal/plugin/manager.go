@@ -169,6 +169,11 @@ func (m *Manager) Discover(dirs []string, userDir string) error {
 				continue
 			}
 			if isUserDir {
+				manifest.IsUserPlugin = true
+				if err := ValidateUserHandler(manifest); err != nil {
+					log.Printf("WARNING: user plugin %q: %v — skipped", manifest.Name, err)
+					continue
+				}
 				if manifest.ProvidesAuth() {
 					log.Printf("WARNING: user plugin %q declares provides.auth — skipped (not allowed)",
 						manifest.Name)

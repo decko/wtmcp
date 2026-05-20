@@ -66,6 +66,11 @@ type Manifest struct {
 	// Dir is the directory containing this manifest (set at load time).
 	Dir string `yaml:"-"`
 
+	// IsUserPlugin is true when the plugin was loaded from the user
+	// plugin directory. User plugins have additional restrictions
+	// (no symlink/hardlink handlers, no provides.auth).
+	IsUserPlugin bool `yaml:"-"`
+
 	// resolvedConfig holds the resolved config values (env vars expanded).
 	// Set by the plugin manager after loading.
 	resolvedConfig json.RawMessage `yaml:"-"`
@@ -613,4 +618,83 @@ func extractVariantOrder(data []byte) ([]string, error) {
 		order = append(order, node.Content[i].Value)
 	}
 	return order, nil
+}
+
+// validateHandlerAtLaunch performs a runtime re-check of the handler
+// path for user plugins immediately before exec. This narrows the
+// TOCTOU window between discovery-time validation and execution.
+func validateHandlerAtLaunch(m *Manifest) error {
+	if !m.IsUserPlugin {
+		return nil
+	}
+	handlerPath := filepath.Join(m.Dir, m.Handler)
+	info, err := os.Lstat(handlerPath)
+	if err != nil {
+		return fmt.Errorf("lstat handler at launch: %w", err)
+	}
+	if info.Mode().Type()&os.ModeSymlink != 0 {
+		return fmt.Errorf("handler became a symlink since discovery (not allowed in user plugins)")
+	}
+	if err := rejectHandlerHardlink(info); err != nil {
+		return fmt.Errorf("handler at launch: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(handlerPath)
+	if err != nil {
+		return fmt.Errorf("handler path cannot be resolved at launch: %w", err)
+	}
+	absDir, err := filepath.Abs(m.Dir)
+	if err != nil {
+		return fmt.Errorf("cannot resolve plugin dir at launch: %w", err)
+	}
+	if resolvedDir, err := filepath.EvalSymlinks(m.Dir); err == nil {
+		absDir = resolvedDir
+	}
+	if !strings.HasPrefix(resolved, absDir+string(filepath.Separator)) {
+		return fmt.Errorf("handler path escapes plugin directory at launch: %s", m.Handler)
+	}
+	return nil
+}
+
+// ValidateUserHandler checks that a user plugin's handler is not a
+// symlink or hardlink. This prevents user-controlled plugins from
+// executing binaries outside their directory via symlink chains or
+// hardlinks to system plugin binaries.
+//
+// Called by Discover() after LoadManifest(), not from Validate(),
+// because IsUserPlugin is set after manifest loading.
+func ValidateUserHandler(m *Manifest) error {
+	if !m.IsUserPlugin {
+		return nil
+	}
+	handlerPath := filepath.Join(m.Dir, m.Handler)
+	info, err := os.Lstat(handlerPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // handler may not exist yet during manifest-only validation
+		}
+		return fmt.Errorf("lstat handler: %w", err)
+	}
+	if info.Mode().Type()&os.ModeSymlink != 0 {
+		return fmt.Errorf("handler %q is a symlink (not allowed in user plugins)", m.Handler)
+	}
+	if err := rejectHandlerHardlink(info); err != nil {
+		return fmt.Errorf("handler %q: %w", m.Handler, err)
+	}
+	// For user plugins, make EvalSymlinks a hard requirement when the
+	// handler exists. This catches intermediate directory symlinks.
+	resolved, err := filepath.EvalSymlinks(handlerPath)
+	if err != nil {
+		return fmt.Errorf("handler path cannot be fully resolved: %w", err)
+	}
+	absDir, err := filepath.Abs(m.Dir)
+	if err != nil {
+		return fmt.Errorf("cannot resolve plugin dir: %w", err)
+	}
+	if resolvedDir, err := filepath.EvalSymlinks(m.Dir); err == nil {
+		absDir = resolvedDir
+	}
+	if !strings.HasPrefix(resolved, absDir+string(filepath.Separator)) {
+		return fmt.Errorf("handler path escapes plugin directory: %s", m.Handler)
+	}
+	return nil
 }

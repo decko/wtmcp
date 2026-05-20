@@ -245,6 +245,9 @@ func (h *Handle) callOneshot(ctx context.Context, toolName string, params json.R
 		if h.sbMgr != nil {
 			log.Printf("[%s] WARNING: sandbox disabled — oneshot process is not isolated", h.manifest.Name)
 		}
+		if err := validateHandlerAtLaunch(h.manifest); err != nil {
+			return nil, err
+		}
 		cmd := exec.CommandContext(ctx, h.manifest.HandlerPath()) //nolint:gosec // handler path validated by Manifest.Validate()
 		cmd.Dir = h.manifest.Dir
 		cmd.Env = buildPluginEnv(h.manifest, h.groupVars)

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -961,5 +962,191 @@ func TestManifestCloneIndependence(t *testing.T) {
 
 	if !reflect.DeepEqual(original, pristine) {
 		t.Error("mutating clone should not affect original")
+	}
+}
+
+func TestValidateUserHandlerRejectsSymlink(t *testing.T) {
+	pluginDir := t.TempDir()
+	outsideDir := t.TempDir()
+	outsideHandler := filepath.Join(outsideDir, "evil")
+	if err := os.WriteFile(outsideHandler, []byte("#!/bin/bash\n"), 0o755); err != nil { //nolint:gosec
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(outsideHandler, filepath.Join(pluginDir, "handler")); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manifest{
+		Handler:      "./handler",
+		Dir:          pluginDir,
+		IsUserPlugin: true,
+	}
+	err := ValidateUserHandler(m)
+	if err == nil {
+		t.Fatal("expected error for symlink handler in user plugin")
+	}
+	if !contains(err.Error(), "symlink") {
+		t.Errorf("error = %q, want substring 'symlink'", err.Error())
+	}
+}
+
+func TestValidateUserHandlerAllowsSymlinkInSystemPlugin(t *testing.T) {
+	pluginDir := t.TempDir()
+	outsideDir := t.TempDir()
+	outsideHandler := filepath.Join(outsideDir, "handler")
+	if err := os.WriteFile(outsideHandler, []byte("#!/bin/bash\n"), 0o755); err != nil { //nolint:gosec
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(outsideHandler, filepath.Join(pluginDir, "handler")); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manifest{
+		Handler:      "./handler",
+		Dir:          pluginDir,
+		IsUserPlugin: false,
+	}
+	err := ValidateUserHandler(m)
+	if err != nil {
+		t.Errorf("system plugin symlink should be allowed, got %v", err)
+	}
+}
+
+func TestValidateUserHandlerRejectsDanglingSymlink(t *testing.T) {
+	pluginDir := t.TempDir()
+
+	if err := os.Symlink("/nonexistent/target", filepath.Join(pluginDir, "handler")); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manifest{
+		Handler:      "./handler",
+		Dir:          pluginDir,
+		IsUserPlugin: true,
+	}
+	err := ValidateUserHandler(m)
+	if err == nil {
+		t.Fatal("expected error for dangling symlink handler in user plugin")
+	}
+	if !contains(err.Error(), "symlink") {
+		t.Errorf("error = %q, want substring 'symlink'", err.Error())
+	}
+}
+
+func TestValidateUserHandlerAllowsRegularFile(t *testing.T) {
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "handler"), []byte("#!/bin/bash\n"), 0o755); err != nil { //nolint:gosec
+		t.Fatal(err)
+	}
+
+	m := &Manifest{
+		Handler:      "./handler",
+		Dir:          pluginDir,
+		IsUserPlugin: true,
+	}
+	if err := ValidateUserHandler(m); err != nil {
+		t.Errorf("regular file handler in user plugin should be allowed, got %v", err)
+	}
+}
+
+func TestValidateUserHandlerNonexistentSkips(t *testing.T) {
+	pluginDir := t.TempDir()
+
+	m := &Manifest{
+		Handler:      "./handler",
+		Dir:          pluginDir,
+		IsUserPlugin: true,
+	}
+	if err := ValidateUserHandler(m); err != nil {
+		t.Errorf("nonexistent handler should skip validation, got %v", err)
+	}
+}
+
+func TestValidateUserHandlerIntermediateDirSymlink(t *testing.T) {
+	pluginDir := t.TempDir()
+	outsideDir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(outsideDir, "bin"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outsideDir, "bin", "handler"), []byte("#!/bin/bash\n"), 0o755); err != nil { //nolint:gosec
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(filepath.Join(outsideDir, "bin"), filepath.Join(pluginDir, "bin")); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manifest{
+		Handler:      "./bin/handler",
+		Dir:          pluginDir,
+		IsUserPlugin: true,
+	}
+	err := ValidateUserHandler(m)
+	if err == nil {
+		t.Fatal("expected error for handler via symlinked intermediate directory")
+	}
+	if !contains(err.Error(), "escapes plugin directory") {
+		t.Errorf("error = %q, want 'escapes plugin directory'", err.Error())
+	}
+}
+
+func TestClonePreservesIsUserPlugin(t *testing.T) {
+	m := &Manifest{
+		Name:         "test",
+		IsUserPlugin: true,
+	}
+	c := m.Clone()
+	if !c.IsUserPlugin {
+		t.Error("Clone() should preserve IsUserPlugin")
+	}
+}
+
+func TestValidateUserHandlerRejectsHardlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hardlink detection not available on Windows")
+	}
+	pluginDir := t.TempDir()
+	handler := filepath.Join(pluginDir, "handler")
+	if err := os.WriteFile(handler, []byte("#!/bin/bash\n"), 0o755); err != nil { //nolint:gosec
+		t.Fatal(err)
+	}
+	hardlink := filepath.Join(pluginDir, "handler-link")
+	if err := os.Link(handler, hardlink); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manifest{
+		Handler:      "./handler",
+		Dir:          pluginDir,
+		IsUserPlugin: true,
+	}
+	err := ValidateUserHandler(m)
+	if err == nil {
+		t.Fatal("expected error for hardline handler in user plugin")
+	}
+	if !contains(err.Error(), "hardlink") {
+		t.Errorf("error = %q, want substring 'hardlink'", err.Error())
+	}
+}
+
+func TestValidateUserHandlerAllowsSingleLinkFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hardlink detection not available on Windows")
+	}
+	pluginDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pluginDir, "handler"), []byte("#!/bin/bash\n"), 0o755); err != nil { //nolint:gosec
+		t.Fatal(err)
+	}
+
+	m := &Manifest{
+		Handler:      "./handler",
+		Dir:          pluginDir,
+		IsUserPlugin: true,
+	}
+	if err := ValidateUserHandler(m); err != nil {
+		t.Errorf("single-link file should be allowed, got %v", err)
 	}
 }

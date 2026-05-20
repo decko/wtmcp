@@ -152,6 +152,10 @@ func (p *Process) startSandboxed(ctx context.Context, stdin *io.WriteCloser, std
 }
 
 func (p *Process) startUnsandboxed(ctx context.Context, stdin *io.WriteCloser, stdout, stderr *io.ReadCloser) error {
+	if err := validateHandlerAtLaunch(p.manifest); err != nil {
+		p.state = StateFailed
+		return err
+	}
 	p.cmd = exec.CommandContext(ctx, p.manifest.HandlerPath()) //nolint:gosec // handler path is validated by Manifest.Validate()
 	p.cmd.Dir = p.manifest.Dir
 	p.cmd.Env = buildPluginEnv(p.manifest, p.groupVars)
