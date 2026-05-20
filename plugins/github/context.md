@@ -59,8 +59,9 @@ Detail tools (`github_get_pr`, `github_get_issue`) return full URLs.
 - `github_my_notifications` requires a **classic PAT** with the
   `notifications` scope. Fine-grained PATs do not support
   the notifications API.
-- All tools are **read-only**. Commenting, approving, and merging
-  are not yet supported.
+- **Write tools** are available for posting PR reviews and comments.
+  All write tools default to `dry_run: true` for safety. APPROVE
+  reviews require `confirm_approve: true`.
 - Rate limit: 5000 requests/hour for authenticated users. The
   plugin includes rate limit warnings when remaining calls drop
   below 100.
