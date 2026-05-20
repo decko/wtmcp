@@ -78,7 +78,7 @@ PR_RESPONSE = {
     "body": "Description",
     "user": {"login": "alice"},
     "base": {"ref": "main"},
-    "head": {"ref": "feature"},
+    "head": {"ref": "feature", "sha": "abc123def456"},
     "merged": False,
     "mergeable": True,
     "mergeable_state": "clean",
@@ -263,6 +263,7 @@ class TestGetPr:
             assert result["number"] == 42
             assert result["title"] == "Add feature"
             assert result["additions"] == 10
+            assert result["head_sha"] == "abc123def456"
             assert result["requested_reviewers"] == ["testuser"]
 
     def test_invalid_repo(self):

@@ -295,6 +295,7 @@ def get_pr(params):
         "author": (body.get("user") or {}).get("login", ""),
         "base": (body.get("base") or {}).get("ref", ""),
         "head": (body.get("head") or {}).get("ref", ""),
+        "head_sha": (body.get("head") or {}).get("sha", ""),
         "merged": body.get("merged"),
         "mergeable": body.get("mergeable"),
         "mergeable_state": body.get("mergeable_state"),
