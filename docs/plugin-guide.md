@@ -182,6 +182,35 @@ services:
 When `select` is `auto`, the core picks the first variant with
 valid credentials.
 
+### SAML SSO Init
+
+Kerberos-authenticated plugins that connect to services behind a
+SAML SSO wall can use `saml_init` to proactively establish a SAML
+session at plugin startup. Without this, the first request triggers
+a reactive SSO flow (which only works for idempotent requests).
+
+```yaml
+services:
+  auth:
+    type: kerberos
+    spnego_proactive: false
+    saml_init: "/saml.redirect?relayState="
+  http:
+    base_url: "https://source.redhat.com"
+    allowed_domains:
+      - source.redhat.com
+      - auth.redhat.com
+```
+
+The `saml_init` value is a URL (absolute or relative to `base_url`)
+that triggers the SAML login flow. The IdP domain (e.g.,
+`auth.redhat.com`) must be listed in `allowed_domains` for the
+redirect chain to be followed.
+
+The proxy follows the SAML flow using the plugin's Kerberos
+credentials, collecting session cookies. Subsequent requests use
+the established session.
+
 ### TLS Configuration
 
 Plugins connecting to services with private CAs or requiring mutual
