@@ -221,7 +221,7 @@ func handleSAMLSSO(ctx context.Context, client *http.Client, body []byte, baseUR
 		}
 	}()
 
-	idpBody, err := io.ReadAll(io.LimitReader(idpResp.Body, 1<<20))
+	idpBody, err := io.ReadAll(io.LimitReader(idpResp.Body, samlInitBodyLimit))
 	if err != nil {
 		return false
 	}
