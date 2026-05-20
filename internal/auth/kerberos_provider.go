@@ -27,16 +27,21 @@ func (k *KerberosProvider) Name() string { return "kerberos/spnego" }
 // SPN returns the configured service principal name.
 func (k *KerberosProvider) SPN() string { return k.spn }
 
-// Available reports whether GSSAPI is initialized. When spn is empty,
-// the SPN is derived dynamically from each request's hostname.
+// Available reports whether GSSAPI is initialized. Does not require
+// a configured SPN because SPNEGORoundTripper derives the SPN
+// dynamically from each request's hostname when spn is empty.
+// Authenticate() still requires a non-empty SPN, but it is not
+// called for Kerberos plugins (the transport handles auth).
 func (k *KerberosProvider) Available() bool {
 	return kerberos.Available()
 }
 
 // Authenticate acquires a SPNEGO token and returns the Negotiate header.
+// Not used for Kerberos plugins (SPNEGORoundTripper handles auth at
+// the transport layer), but kept for the Provider interface contract.
 func (k *KerberosProvider) Authenticate(_ context.Context, _ *http.Request) (http.Header, error) {
 	if k.spn == "" {
-		return nil, fmt.Errorf("kerberos SPN not configured")
+		return nil, fmt.Errorf("kerberos SPN not configured (use SPNEGORoundTripper for dynamic SPN)")
 	}
 	if !kerberos.Available() {
 		return nil, fmt.Errorf("GSSAPI library not available")
