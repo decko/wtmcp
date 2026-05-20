@@ -46,6 +46,9 @@ func extractRedirectURL(body []byte, baseURL string) string {
 
 		switch t.Data {
 		case "meta":
+			if !strings.EqualFold(getAttr(t, "http-equiv"), "refresh") {
+				continue
+			}
 			content := getAttr(t, "content")
 			if idx := strings.Index(strings.ToLower(content), "url="); idx >= 0 {
 				redirect := strings.TrimSpace(content[idx+4:])

@@ -44,13 +44,13 @@ func TestExtractRedirectURL(t *testing.T) {
 	}{
 		{
 			name:    "meta refresh absolute",
-			body:    `<html><meta content="0;url=https://idp.example.com/auth/realms/test" /></html>`,
+			body:    `<html><meta http-equiv="refresh" content="0;url=https://idp.example.com/auth/realms/test" /></html>`,
 			baseURL: "https://jenkins.example.com",
 			want:    "https://idp.example.com/auth/realms/test",
 		},
 		{
 			name:    "meta refresh relative",
-			body:    `<html><meta content="0;url=/securityRealm/commenceLogin" /></html>`,
+			body:    `<html><meta http-equiv="refresh" content="0;url=/securityRealm/commenceLogin" /></html>`,
 			baseURL: "https://jenkins.example.com",
 			want:    "https://jenkins.example.com/securityRealm/commenceLogin",
 		},
@@ -68,15 +68,27 @@ func TestExtractRedirectURL(t *testing.T) {
 		},
 		{
 			name:    "base URL trailing slash",
-			body:    `<html><meta content="0;url=/login" /></html>`,
+			body:    `<html><meta http-equiv="refresh" content="0;url=/login" /></html>`,
 			baseURL: "https://jenkins.example.com/",
 			want:    "https://jenkins.example.com/login",
 		},
 		{
 			name:    "html entity in URL",
-			body:    `<html><meta content="0;url=https://idp.example.com/auth?client_id=x&amp;state=y" /></html>`,
+			body:    `<html><meta http-equiv="refresh" content="0;url=https://idp.example.com/auth?client_id=x&amp;state=y" /></html>`,
 			baseURL: "https://jenkins.example.com",
 			want:    "https://idp.example.com/auth?client_id=x&state=y",
+		},
+		{
+			name:    "ignores non-refresh meta with description",
+			body:    `<html><meta name="description" content="Visit url=https://evil.com" /></html>`,
+			baseURL: "https://jenkins.example.com",
+			want:    "",
+		},
+		{
+			name:    "ignores wrong http-equiv value",
+			body:    `<html><meta http-equiv="content-type" content="text/html; url=https://evil.com" /></html>`,
+			baseURL: "https://jenkins.example.com",
+			want:    "",
 		},
 	}
 	for _, tt := range tests {
@@ -253,7 +265,7 @@ func TestHandleSAMLSSO(t *testing.T) {
 	client.Jar = jar
 
 	authRedirectBody := fmt.Sprintf(
-		`<html><meta content="0;url=%s/securityRealm/commenceLogin" /></html>`,
+		`<html><meta http-equiv="refresh" content="0;url=%s/securityRealm/commenceLogin" /></html>`,
 		srv.URL,
 	)
 
@@ -290,7 +302,7 @@ func TestHandleSAMLSSONoRedirect(t *testing.T) {
 }
 
 func TestHandleSAMLSSOBlocksDisallowedDomain(t *testing.T) {
-	body := `<html><meta content="0;url=https://evil.com/steal" /></html>`
+	body := `<html><meta http-equiv="refresh" content="0;url=https://evil.com/steal" /></html>`
 	ok := handleSAMLSSO(context.Background(), &http.Client{}, []byte(body), "https://jenkins.example.com", []string{"jenkins.example.com"})
 	if ok {
 		t.Error("expected failure for redirect to disallowed domain")
@@ -309,7 +321,7 @@ func TestTrySAMLSSOIntegration(t *testing.T) {
 		if n == 1 {
 			w.Header().Set("Content-Type", "text/html")
 			w.WriteHeader(403)
-			_, _ = fmt.Fprintf(w, `<html><meta content="0;url=%s/idp/login" /></html>`, srv.URL)
+			_, _ = fmt.Fprintf(w, `<html><meta http-equiv="refresh" content="0;url=%s/idp/login" /></html>`, srv.URL)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -361,7 +373,7 @@ func TestTrySAMLSSONonKerberos(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(403)
-		_, _ = fmt.Fprint(w, `<html><meta content="0;url=/login" /></html>`)
+		_, _ = fmt.Fprint(w, `<html><meta http-equiv="refresh" content="0;url=/login" /></html>`)
 	}))
 	defer srv.Close()
 
@@ -465,7 +477,7 @@ func TestInitSAMLSessionRedirectFirst(t *testing.T) {
 	// Init URL returns a page with a meta-refresh redirect
 	mux.HandleFunc("/login", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = fmt.Fprintf(w, `<html><meta content="0;url=%s/idp/sso" /></html>`, srv.URL)
+		_, _ = fmt.Fprintf(w, `<html><meta http-equiv="refresh" content="0;url=%s/idp/sso" /></html>`, srv.URL)
 	})
 
 	// IdP returns SAML form
@@ -593,7 +605,7 @@ func TestTrySAMLSSOSkippedWithNoAuth(t *testing.T) {
 		requestCount.Add(1)
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(403)
-		_, _ = fmt.Fprintf(w, `<html><meta content="0;url=%s/idp/login" /></html>`, srv.URL)
+		_, _ = fmt.Fprintf(w, `<html><meta http-equiv="refresh" content="0;url=%s/idp/login" /></html>`, srv.URL)
 	})
 
 	jar, _ := cookiejar.New(nil)
@@ -756,10 +768,10 @@ func TestHandleSAMLSSOBlocksRedirectToUnknownDomain(t *testing.T) {
 	mux.HandleFunc("/login", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		// IdP redirects to an evil domain via meta-refresh
-		_, _ = fmt.Fprintf(w, `<html><meta content="0;url=%s/steal" /></html>`, evil.URL)
+		_, _ = fmt.Fprintf(w, `<html><meta http-equiv="refresh" content="0;url=%s/steal" /></html>`, evil.URL)
 	})
 
-	body := fmt.Sprintf(`<html><meta content="0;url=%s/login" /></html>`, srv.URL)
+	body := fmt.Sprintf(`<html><meta http-equiv="refresh" content="0;url=%s/login" /></html>`, srv.URL)
 
 	jar, _ := cookiejar.New(nil)
 	client := srv.Client()
@@ -789,7 +801,7 @@ func TestTrySAMLSSOSkipsReplayForPOST(t *testing.T) {
 		apiCalls.Add(1)
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(401)
-		_, _ = fmt.Fprintf(w, `<html><meta content="0;url=%s/idp/sso" /></html>`, srv.URL)
+		_, _ = fmt.Fprintf(w, `<html><meta http-equiv="refresh" content="0;url=%s/idp/sso" /></html>`, srv.URL)
 	})
 
 	mux.HandleFunc("/idp/sso", func(w http.ResponseWriter, _ *http.Request) {
