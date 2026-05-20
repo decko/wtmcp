@@ -33,6 +33,11 @@ func (d *safeDialer) DialContext(ctx context.Context, network, addr string) (net
 		return nil, err
 	}
 
+	for _, ipStr := range ips {
+		if err := checkMetadataIP(ipStr); err != nil {
+			return nil, fmt.Errorf("SSRF blocked: host %s: %w", host, err)
+		}
+	}
 	if !d.allowPrivate {
 		for _, ipStr := range ips {
 			if err := checkIP(ipStr); err != nil {
@@ -60,6 +65,52 @@ var (
 	sixToFourNet = mustParseCIDR("2002::/16")     // RFC 3056: 6to4 (deprecated by RFC 7526)
 	teredoNet    = mustParseCIDR("2001::/32")     // RFC 4380: Teredo tunneling
 )
+
+// cloudMetadataNets are always blocked, even with allow_private_ips.
+// These are cloud instance metadata endpoints that can leak IAM
+// credentials, identity tokens, and other sensitive instance data.
+var cloudMetadataNets = []struct {
+	net  *net.IPNet
+	desc string
+}{
+	{mustParseCIDR("169.254.169.254/32"), "AWS/GCP/Azure/OCI/DO IMDS"},
+	{mustParseCIDR("fd00:ec2::254/128"), "AWS IMDSv2 IPv6"},
+	{mustParseCIDR("fd20:ce::254/128"), "GCP IMDS IPv6"},
+	{mustParseCIDR("168.63.129.16/32"), "Azure Wire Server"},
+	{mustParseCIDR("100.100.100.200/32"), "Alibaba Cloud ECS metadata"},
+}
+
+// checkMetadataIP blocks cloud metadata endpoints regardless of the
+// allowPrivate setting. Uses IPv4 normalization to catch IPv6-mapped
+// representations like ::ffff:169.254.169.254.
+func checkMetadataIP(ipStr string) error {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return fmt.Errorf("unparseable IP address %q", ipStr)
+	}
+
+	if matchesMetadata(ip) {
+		return fmt.Errorf("resolves to cloud metadata address %s", ipStr)
+	}
+
+	// Check IPv6-mapped IPv4 form (::ffff:169.254.169.254)
+	if ipv4 := ip.To4(); ipv4 != nil && len(ip) == net.IPv6len {
+		if matchesMetadata(ipv4) {
+			return fmt.Errorf("resolves to cloud metadata address %s", ipStr)
+		}
+	}
+
+	return nil
+}
+
+func matchesMetadata(ip net.IP) bool {
+	for _, entry := range cloudMetadataNets {
+		if entry.net.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
 
 func mustParseCIDR(s string) *net.IPNet {
 	_, n, err := net.ParseCIDR(s)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -724,6 +725,51 @@ func TestCheckIPv6MappedCGNAT(t *testing.T) {
 		if err := checkIP(ip); err == nil {
 			t.Errorf("checkIP(%q) = nil, want reserved blocked", ip)
 		}
+	}
+}
+
+func TestCheckMetadataIPBlocked(t *testing.T) {
+	blocked := []string{
+		"169.254.169.254",        // AWS/GCP/Azure IMDS
+		"fd00:ec2::254",          // AWS IMDSv2 IPv6
+		"fd20:ce::254",           // GCP IMDS IPv6
+		"168.63.129.16",          // Azure Wire Server
+		"100.100.100.200",        // Alibaba Cloud ECS metadata
+		"::ffff:169.254.169.254", // IPv6-mapped IMDS
+		"::ffff:168.63.129.16",   // IPv6-mapped Azure Wire Server
+		"::ffff:100.100.100.200", // IPv6-mapped Alibaba
+	}
+	for _, ip := range blocked {
+		if err := checkMetadataIP(ip); err == nil {
+			t.Errorf("checkMetadataIP(%q) = nil, want blocked", ip)
+		}
+	}
+}
+
+func TestCheckMetadataIPAllowed(t *testing.T) {
+	allowed := []string{
+		"10.0.0.1",        // RFC 1918 — not metadata
+		"192.168.1.1",     // RFC 1918 — not metadata
+		"127.0.0.1",       // loopback — not metadata
+		"8.8.8.8",         // public DNS
+		"169.254.1.1",     // link-local but not metadata
+		"100.100.100.100", // CGNAT — not metadata
+	}
+	for _, ip := range allowed {
+		if err := checkMetadataIP(ip); err != nil {
+			t.Errorf("checkMetadataIP(%q) = %v, want allowed", ip, err)
+		}
+	}
+}
+
+func TestSafeDialerBlocksMetadataWithAllowPrivate(t *testing.T) {
+	d := &safeDialer{
+		dialer:       net.Dialer{Timeout: 1 * time.Second},
+		allowPrivate: true,
+	}
+	_, err := d.DialContext(context.Background(), "tcp", "169.254.169.254:80")
+	if err == nil || !strings.Contains(err.Error(), "SSRF blocked") {
+		t.Errorf("metadata IP should be blocked even with allowPrivate, got: %v", err)
 	}
 }
 
