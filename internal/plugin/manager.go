@@ -643,19 +643,53 @@ func (m *Manager) preparePlugin(ctx context.Context, name string) (*Handle, erro
 		}
 		pa.Client = client
 		pa.IsKerberos = true
-		log.Printf("[%s] using kerberos client (spn=%q, proactive=%v)", name, spn, proactive)
-	case pa.TLS.HasConfig():
-		transport, err := proxy.SafeTransportWithTLS(pa.AllowPrivateIPs, pa.TLS)
+		tlsTransport, err := proxy.SafeTransportWithTLS(pa.AllowPrivateIPs, pa.TLS)
 		if err != nil {
-			return nil, fmt.Errorf("[%s] create TLS transport: %w", name, err)
+			return nil, fmt.Errorf("[%s] create TLS transport for noAuth: %w", name, err)
 		}
-		pa.Client = &http.Client{
-			Transport:     transport,
+		pa.TLSClient = &http.Client{
+			Transport:     tlsTransport,
 			Timeout:       m.cfg.HTTP.Timeout,
+			Jar:           client.Jar,
 			CheckRedirect: proxy.StripAuthOnCrossDomainRedirect,
 		}
-		log.Printf("[%s] using TLS client (ca=%v, mtls=%v, skip_hostname=%v)",
-			name, pa.TLS.CACert != "", pa.TLS.ClientCert != "", pa.TLS.SkipHostnameVerify)
+		log.Printf("[%s] using kerberos client (spn=%q, proactive=%v)", name, spn, proactive)
+	case pa.TLS.HasConfig():
+		pa.Provider = m.resolveAuth(name, manifest)
+		if kp, ok := pa.Provider.(*auth.KerberosProvider); ok {
+			spn := kp.SPN()
+			proactive := manifest.Services.Auth.SPNEGOProactive == nil || *manifest.Services.Auth.SPNEGOProactive
+			client, err := proxy.NewKerberosClient(spn, proactive, pa.AllowPrivateIPs, pa.TLS, m.cfg.HTTP.Timeout)
+			if err != nil {
+				return nil, fmt.Errorf("[%s] create kerberos client: %w", name, err)
+			}
+			pa.Client = client
+			pa.IsKerberos = true
+			transport, err := proxy.SafeTransportWithTLS(pa.AllowPrivateIPs, pa.TLS)
+			if err != nil {
+				return nil, fmt.Errorf("[%s] create TLS transport for noAuth: %w", name, err)
+			}
+			pa.TLSClient = &http.Client{
+				Transport:     transport,
+				Timeout:       m.cfg.HTTP.Timeout,
+				Jar:           client.Jar,
+				CheckRedirect: proxy.StripAuthOnCrossDomainRedirect,
+			}
+			log.Printf("[%s] variant resolved to kerberos with TLS, using kerberos client (spn=%q, proactive=%v)", name, spn, proactive)
+		} else {
+			transport, err := proxy.SafeTransportWithTLS(pa.AllowPrivateIPs, pa.TLS)
+			if err != nil {
+				return nil, fmt.Errorf("[%s] create TLS transport: %w", name, err)
+			}
+			pa.TLSTransport = transport
+			pa.TLSClient = &http.Client{
+				Transport:     transport,
+				Timeout:       m.cfg.HTTP.Timeout,
+				CheckRedirect: proxy.StripAuthOnCrossDomainRedirect,
+			}
+			log.Printf("[%s] using TLS transport (ca=%v, mtls=%v, skip_hostname=%v)",
+				name, pa.TLS.CACert != "", pa.TLS.ClientCert != "", pa.TLS.SkipHostnameVerify)
+		}
 	default:
 		pa.Provider = m.resolveAuth(name, manifest)
 		if kp, ok := pa.Provider.(*auth.KerberosProvider); ok {
@@ -667,6 +701,16 @@ func (m *Manager) preparePlugin(ctx context.Context, name string) (*Handle, erro
 			}
 			pa.Client = client
 			pa.IsKerberos = true
+			tlsTransport, err := proxy.SafeTransportWithTLS(pa.AllowPrivateIPs, pa.TLS)
+			if err != nil {
+				return nil, fmt.Errorf("[%s] create TLS transport for noAuth: %w", name, err)
+			}
+			pa.TLSClient = &http.Client{
+				Transport:     tlsTransport,
+				Timeout:       m.cfg.HTTP.Timeout,
+				Jar:           client.Jar,
+				CheckRedirect: proxy.StripAuthOnCrossDomainRedirect,
+			}
 			log.Printf("[%s] variant resolved to kerberos, using kerberos client (spn=%q, proactive=%v)", name, spn, proactive)
 		}
 	}

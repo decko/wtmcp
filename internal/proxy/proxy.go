@@ -80,6 +80,17 @@ type PluginAuth struct {
 	// client.
 	Client     *http.Client
 	IsKerberos bool // true when Client uses SPNEGO transport
+
+	// TLSClient is a TLS-aware client without SPNEGO. Used for:
+	// - Kerberos plugins: noAuth requests (shares Kerberos client's
+	//   cookie jar for SAML session continuity)
+	// - Non-Kerberos TLS plugins: all requests (pa.Client stays nil
+	//   so injectAuth runs for auth header injection)
+	TLSClient *http.Client
+
+	// TLSTransport holds the custom TLS transport backing TLSClient.
+	// Retained for direct transport access if needed.
+	TLSTransport *http.Transport
 }
 
 // Proxy executes HTTP requests on behalf of plugins, injecting
@@ -452,14 +463,16 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 // client for HTTPS (preserves custom CA / client certs).
 func (p *Proxy) selectClient(pa *PluginAuth, noAuth bool) *http.Client {
 	switch {
-	case noAuth && pa.Client != nil && !pa.IsKerberos:
-		return pa.Client // mTLS client — keeps custom CA + client certs
+	case noAuth && pa.TLSClient != nil:
+		return pa.TLSClient // noAuth with custom TLS — preserves CA, no auth
 	case noAuth && pa.AllowPrivateIPs:
 		return p.privateClient
 	case noAuth:
 		return p.client
 	case pa.Client != nil:
 		return pa.Client // Kerberos or mTLS client
+	case pa.TLSClient != nil:
+		return pa.TLSClient
 	case pa.AllowPrivateIPs:
 		return p.privateClient
 	default:

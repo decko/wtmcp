@@ -765,6 +765,82 @@ func TestStripAuthOnCrossDomainRedirect(t *testing.T) {
 	})
 }
 
+func TestSelectClient(t *testing.T) {
+	defaultClient := &http.Client{}
+	privateClient := &http.Client{}
+	kerberosClient := &http.Client{}
+	tlsClient := &http.Client{}
+
+	p := &Proxy{
+		client:        defaultClient,
+		privateClient: privateClient,
+	}
+
+	tests := []struct {
+		name   string
+		pa     *PluginAuth
+		noAuth bool
+		want   *http.Client
+	}{
+		{
+			name:   "noAuth Kerberos with TLSClient returns TLSClient",
+			pa:     &PluginAuth{Client: kerberosClient, IsKerberos: true, TLSClient: tlsClient},
+			noAuth: true,
+			want:   tlsClient,
+		},
+		{
+			name:   "noAuth non-Kerberos TLS returns TLSClient",
+			pa:     &PluginAuth{TLSClient: tlsClient},
+			noAuth: true,
+			want:   tlsClient,
+		},
+		{
+			name:   "noAuth AllowPrivateIPs returns privateClient",
+			pa:     &PluginAuth{AllowPrivateIPs: true},
+			noAuth: true,
+			want:   privateClient,
+		},
+		{
+			name:   "noAuth default returns p.client",
+			pa:     &PluginAuth{},
+			noAuth: true,
+			want:   defaultClient,
+		},
+		{
+			name:   "auth Kerberos returns pa.Client",
+			pa:     &PluginAuth{Client: kerberosClient, IsKerberos: true},
+			noAuth: false,
+			want:   kerberosClient,
+		},
+		{
+			name:   "auth TLSClient (non-Kerberos TLS) returns TLSClient",
+			pa:     &PluginAuth{TLSClient: tlsClient},
+			noAuth: false,
+			want:   tlsClient,
+		},
+		{
+			name:   "auth AllowPrivateIPs returns privateClient",
+			pa:     &PluginAuth{AllowPrivateIPs: true},
+			noAuth: false,
+			want:   privateClient,
+		},
+		{
+			name:   "auth default returns p.client",
+			pa:     &PluginAuth{},
+			noAuth: false,
+			want:   defaultClient,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := p.selectClient(tt.pa, tt.noAuth)
+			if got != tt.want {
+				t.Errorf("selectClient() returned wrong client")
+			}
+		})
+	}
+}
+
 func TestSafeDialerAllowPrivate(t *testing.T) {
 	d := &safeDialer{allowPrivate: true}
 	// Should not error when connecting to localhost with allowPrivate
