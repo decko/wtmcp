@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 )
@@ -252,3 +253,75 @@ func TestNewForTest(t *testing.T) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+func TestToolCallParentIDPropagation(t *testing.T) {
+	// Use io.Pipe so we can interleave: send tool_call, read the HTTP
+	// request from the handler, send an HTTP response, then read the
+	// tool result.
+	// core writes to coreW → plugin reads from coreR (plugin's stdin)
+	coreR, coreW := io.Pipe()
+	// plugin writes to pluginW → core reads from pluginR (plugin's stdout)
+	pluginR, pluginW := io.Pipe()
+
+	p := NewForTest(coreR, pluginW)
+	p.Handle("make_http", func(_, _ json.RawMessage) (any, error) {
+		_, err := p.HTTP("GET", "/api/test")
+		if err != nil {
+			return nil, err
+		}
+		return "ok", nil
+	})
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Run() }()
+
+	enc := json.NewEncoder(coreW)
+	dec := json.NewDecoder(pluginR)
+
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("protocol: %v", err)
+		}
+	}
+
+	// Send init
+	must(enc.Encode(Message{ID: "init-1", Type: TypeInit}))
+	var initResp Message
+	must(dec.Decode(&initResp))
+
+	// Send tool_call
+	must(enc.Encode(Message{ID: "call-42", Type: TypeToolCall, Tool: "make_http"}))
+
+	// Read the HTTP request from the handler
+	var httpReq Message
+	must(dec.Decode(&httpReq))
+
+	if httpReq.Type != TypeHTTPRequest {
+		t.Fatalf("expected http_request, got %s", httpReq.Type)
+	}
+	if httpReq.ParentID != "call-42" {
+		t.Errorf("parent_id = %q, want call-42", httpReq.ParentID)
+	}
+
+	// Send HTTP response
+	must(enc.Encode(Message{ID: httpReq.ID, Type: TypeHTTPResponse, Status: 200}))
+
+	// Read tool result
+	var toolResult Message
+	must(dec.Decode(&toolResult))
+	if toolResult.Type != TypeToolResult {
+		t.Fatalf("expected tool_result, got %s", toolResult.Type)
+	}
+
+	// Shutdown
+	must(enc.Encode(Message{ID: "shutdown-1", Type: TypeShutdown}))
+	var shutdownResp Message
+	must(dec.Decode(&shutdownResp))
+
+	_ = coreW.Close()
+
+	if err := <-errCh; err != nil {
+		t.Errorf("Run: %v", err)
+	}
+}

@@ -51,6 +51,7 @@ type Plugin struct {
 	resourceList ResourceListFunc
 	resourceRead ResourceReadFunc
 	logger       *log.Logger
+	callID       string // ID of the current tool call (for parent_id tagging)
 }
 
 // New creates a new Plugin that reads from stdin and writes to stdout.
@@ -186,6 +187,9 @@ func (p *Plugin) handleToolCall(msg Message) {
 		})
 		return
 	}
+
+	p.callID = msg.ID
+	defer func() { p.callID = "" }()
 
 	result, err := fn(msg.Params, msg.Config)
 	if err != nil {

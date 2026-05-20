@@ -23,18 +23,21 @@ type Transport struct {
 	pending sync.Map   // id -> chan protocol.Message
 	maxSize int        // max message size in bytes
 	nextID  atomic.Int64
-	done    chan struct{}                   // closed when ReadLoop exits
-	toolCtx atomic.Pointer[context.Context] // current tool call context for ReadLoop
+	done    chan struct{} // closed when ReadLoop exits
+
+	toolCtxMu sync.RWMutex
+	toolCtxs  map[string]*context.Context // tool call ID -> context
 }
 
 // NewTransport creates a Transport for communicating with a plugin process.
 func NewTransport(stdin io.Writer, stdout, stderr io.Reader, maxSize int) *Transport {
 	return &Transport{
-		stdin:   stdin,
-		stdout:  stdout,
-		stderr:  stderr,
-		maxSize: maxSize,
-		done:    make(chan struct{}),
+		stdin:    stdin,
+		stdout:   stdout,
+		stderr:   stderr,
+		maxSize:  maxSize,
+		done:     make(chan struct{}),
+		toolCtxs: make(map[string]*context.Context),
 	}
 }
 
@@ -87,22 +90,46 @@ func (t *Transport) SendAndWait(ctx context.Context, id string, msg protocol.Mes
 	}
 }
 
-// SetToolContext sets the current tool call's context so ReadLoop can
-// use it for service requests (HTTP, cache). Cleared by the caller
-// when the tool call completes or times out. The deferred cancel()
-// from the tool call's context.WithTimeout propagates cancellation to
-// any in-flight HTTP request, unblocking ReadLoop.
-func (t *Transport) SetToolContext(ctx *context.Context) {
-	t.toolCtx.Store(ctx)
+// SetToolContext associates a tool call's context with its message ID.
+// ReadLoop uses the parent_id field on service requests to look up the
+// correct context for each in-flight call.
+func (t *Transport) SetToolContext(id string, ctx *context.Context) {
+	t.toolCtxMu.Lock()
+	t.toolCtxs[id] = ctx
+	t.toolCtxMu.Unlock()
 }
 
-// ToolContext returns the current tool call context, or
-// context.Background() if none is set (e.g., during plugin init).
-func (t *Transport) ToolContext() context.Context {
-	if p := t.toolCtx.Load(); p != nil {
-		return *p
+// ClearToolContext removes a tool call's context after the call completes.
+func (t *Transport) ClearToolContext(id string) {
+	t.toolCtxMu.Lock()
+	delete(t.toolCtxs, id)
+	t.toolCtxMu.Unlock()
+}
+
+// ToolContext looks up the context for a service request by its parent_id.
+// Returns (ctx, true) when found. When parentID is empty (old SDK):
+// if exactly one call is active, returns that context (backward compat
+// for concurrency=1). Otherwise returns (Background, false).
+// The found flag preserves the nil-gate semantic: cache writes and
+// file I/O reject when !found.
+func (t *Transport) ToolContext(parentID string) (context.Context, bool) {
+	t.toolCtxMu.RLock()
+	defer t.toolCtxMu.RUnlock()
+
+	if parentID != "" {
+		if p, ok := t.toolCtxs[parentID]; ok {
+			return *p, true
+		}
+		return context.Background(), false
 	}
-	return context.Background()
+
+	// Backward compat: empty parent_id with exactly one active call.
+	if len(t.toolCtxs) == 1 {
+		for _, p := range t.toolCtxs {
+			return *p, true
+		}
+	}
+	return context.Background(), false
 }
 
 // ReadLoop reads messages from the plugin's stdout and routes them.
@@ -130,7 +157,7 @@ func (t *Transport) ReadLoop(pluginName string, concurrency int, serviceHandler 
 
 		switch msg.Type {
 		case protocol.TypeHTTPRequest:
-			ctx := t.ToolContext()
+			ctx, _ := t.ToolContext(msg.ParentID)
 			if concurrency <= 1 {
 				resp := serviceHandler.HandleHTTP(ctx, pluginName, msg)
 				if err := t.Send(resp); err != nil {
@@ -146,7 +173,7 @@ func (t *Transport) ReadLoop(pluginName string, concurrency int, serviceHandler 
 			}
 
 		case protocol.TypeCacheGet, protocol.TypeCacheList:
-			ctx := t.ToolContext()
+			ctx, _ := t.ToolContext(msg.ParentID)
 			if concurrency <= 1 {
 				resp := serviceHandler.HandleCache(ctx, pluginName, msg)
 				if err := t.Send(resp); err != nil {
@@ -162,15 +189,14 @@ func (t *Transport) ReadLoop(pluginName string, concurrency int, serviceHandler 
 			}
 
 		case protocol.TypeCacheSet, protocol.TypeCacheDel, protocol.TypeCacheFlush:
-			ctxPtr := t.toolCtx.Load()
-			if ctxPtr == nil {
+			ctx, found := t.ToolContext(msg.ParentID)
+			if !found {
 				resp := transportCacheError(msg.ID, msg.Type, "cache writes not allowed outside tool calls")
 				if err := t.Send(resp); err != nil {
 					log.Printf("[%s] failed to send cache error: %v", pluginName, err)
 				}
 				continue
 			}
-			ctx := *ctxPtr
 			if concurrency <= 1 {
 				resp := serviceHandler.HandleCache(ctx, pluginName, msg)
 				if err := t.Send(resp); err != nil {
@@ -186,15 +212,14 @@ func (t *Transport) ReadLoop(pluginName string, concurrency int, serviceHandler 
 			}
 
 		case protocol.TypeFileWrite, protocol.TypeFileRead:
-			ctxPtr := t.toolCtx.Load()
-			if ctxPtr == nil {
+			ctx, found := t.ToolContext(msg.ParentID)
+			if !found {
 				resp := fileIOError(msg.ID, msg.Type, "file I/O not allowed outside tool calls")
 				if err := t.Send(resp); err != nil {
 					log.Printf("[%s] failed to send file_io error: %v", pluginName, err)
 				}
 				continue
 			}
-			ctx := *ctxPtr
 			switch {
 			case concurrency <= 1:
 				resp := serviceHandler.HandleFileIO(ctx, pluginName, msg)
@@ -202,9 +227,6 @@ func (t *Transport) ReadLoop(pluginName string, concurrency int, serviceHandler 
 					log.Printf("[%s] failed to send file_io response: %v", pluginName, err)
 				}
 			case msg.Type == protocol.TypeFileWrite:
-				// Writes use WithoutCancel: abandoning a write mid-atomic-
-				// sequence leaves stale temp files and silently loses data.
-				// Reads are safe to cancel — no side effects.
 				fioCtx := context.WithoutCancel(ctx)
 				go func(c context.Context, m protocol.Message) {
 					resp := serviceHandler.HandleFileIO(c, pluginName, m)
@@ -245,6 +267,11 @@ func (t *Transport) ReadLoop(pluginName string, concurrency int, serviceHandler 
 		t.pending.Delete(key)
 		return true
 	})
+
+	// Clear context map to prevent leaks from in-flight tool calls.
+	t.toolCtxMu.Lock()
+	clear(t.toolCtxs)
+	t.toolCtxMu.Unlock()
 }
 
 // ForwardStderr reads the plugin's stderr and logs it with a prefix.

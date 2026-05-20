@@ -184,10 +184,12 @@ func TestReadLoopDrainsPendingOnExit(t *testing.T) {
 func TestToolContextDefault(t *testing.T) {
 	tr := NewTransport(io.Discard, strings.NewReader(""), strings.NewReader(""), 1024)
 
-	// With no tool context set, ToolContext returns context.Background()
-	ctx := tr.ToolContext()
+	ctx, found := tr.ToolContext("")
 	if ctx == nil {
 		t.Fatal("ToolContext should not return nil")
+	}
+	if found {
+		t.Error("found should be false when no context is set")
 	}
 	if ctx.Err() != nil {
 		t.Error("default context should not be cancelled")
@@ -200,16 +202,80 @@ func TestToolContextSetAndClear(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	tr.SetToolContext(&ctx)
-	got := tr.ToolContext()
+	tr.SetToolContext("call-1", &ctx)
+	got, found := tr.ToolContext("call-1")
+	if !found {
+		t.Error("found should be true after SetToolContext")
+	}
 	if got != ctx {
 		t.Error("ToolContext should return the set context")
 	}
 
-	tr.SetToolContext(nil)
-	got = tr.ToolContext()
+	tr.ClearToolContext("call-1")
+	got, found = tr.ToolContext("call-1")
+	if found {
+		t.Error("found should be false after ClearToolContext")
+	}
 	if got.Err() != nil {
 		t.Error("after clearing, ToolContext should return a non-cancelled context")
+	}
+}
+
+func TestToolContextBackwardCompat(t *testing.T) {
+	tr := NewTransport(io.Discard, strings.NewReader(""), strings.NewReader(""), 1024)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tr.SetToolContext("call-1", &ctx)
+
+	// Empty parent_id with exactly one active call: backward compat
+	got, found := tr.ToolContext("")
+	if !found {
+		t.Error("single active call with empty parent_id should return found=true")
+	}
+	if got != ctx {
+		t.Error("should return the single active context")
+	}
+}
+
+func TestToolContextMultipleCallsEmptyParentID(t *testing.T) {
+	tr := NewTransport(io.Discard, strings.NewReader(""), strings.NewReader(""), 1024)
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+
+	tr.SetToolContext("call-1", &ctx1)
+	tr.SetToolContext("call-2", &ctx2)
+
+	// Empty parent_id with multiple active calls: ambiguous
+	_, found := tr.ToolContext("")
+	if found {
+		t.Error("multiple active calls with empty parent_id should return found=false")
+	}
+}
+
+func TestToolContextClearOneDoesNotAffectOther(t *testing.T) {
+	tr := NewTransport(io.Discard, strings.NewReader(""), strings.NewReader(""), 1024)
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+
+	tr.SetToolContext("call-1", &ctx1)
+	tr.SetToolContext("call-2", &ctx2)
+
+	tr.ClearToolContext("call-1")
+
+	got, found := tr.ToolContext("call-2")
+	if !found {
+		t.Error("clearing call-1 should not affect call-2")
+	}
+	if got != ctx2 {
+		t.Error("call-2 context should still be accessible")
 	}
 }
 
@@ -226,7 +292,7 @@ func TestReadLoopPassesContextToHTTPHandler(t *testing.T) {
 
 	// Set a cancellable tool context
 	toolCtx, toolCancel := context.WithCancel(context.Background())
-	tr.SetToolContext(&toolCtx)
+	tr.SetToolContext("test-call", &toolCtx)
 
 	handlerDone := make(chan struct{})
 	var receivedCtx context.Context
@@ -262,6 +328,46 @@ func TestReadLoopPassesContextToHTTPHandler(t *testing.T) {
 	}
 	if receivedCtx.Err() == nil {
 		t.Error("received context should be cancelled")
+	}
+}
+
+func TestReadLoopRoutesContextByParentID(t *testing.T) {
+	httpReq := protocol.Message{
+		ID:       "http-1",
+		ParentID: "call-A",
+		Type:     protocol.TypeHTTPRequest,
+		Method:   "GET",
+		Path:     "/api/test",
+	}
+	data, _ := json.Marshal(httpReq)
+	pluginStdout := strings.NewReader(string(data) + "\n")
+
+	var pluginStdin bytes.Buffer
+	tr := NewTransport(&pluginStdin, pluginStdout, strings.NewReader(""), 1024*1024)
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	defer cancelA()
+	ctxB, cancelB := context.WithCancel(context.Background())
+	defer cancelB()
+
+	tr.SetToolContext("call-A", &ctxA)
+	tr.SetToolContext("call-B", &ctxB)
+
+	var receivedCtx context.Context
+	handler := &mockServiceHandler{
+		httpHandler: func(ctx context.Context, _ string, req protocol.Message) protocol.Message {
+			receivedCtx = ctx
+			return protocol.Message{ID: req.ID, Type: protocol.TypeHTTPResponse, Status: 200}
+		},
+	}
+
+	tr.ReadLoop("test-plugin", 1, handler)
+
+	if receivedCtx == nil {
+		t.Fatal("HandleHTTP should have received a context")
+	}
+	if receivedCtx != ctxA {
+		t.Error("HandleHTTP should receive ctxA (parent_id=call-A), not ctxB")
 	}
 }
 
@@ -404,7 +510,7 @@ func TestReadLoopDispatchesFileWrite(t *testing.T) {
 
 	// Set tool context so the gate passes.
 	ctx := context.Background()
-	tr.SetToolContext(&ctx)
+	tr.SetToolContext("test-call", &ctx)
 
 	ch := make(chan protocol.Message, 1)
 	tr.pending.Store("req-1", ch)
@@ -449,7 +555,7 @@ func TestReadLoopDispatchesFileRead(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	tr.SetToolContext(&ctx)
+	tr.SetToolContext("test-call", &ctx)
 
 	ch := make(chan protocol.Message, 1)
 	tr.pending.Store("req-1", ch)

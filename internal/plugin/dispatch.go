@@ -161,10 +161,10 @@ func (h *Handle) callPersistent(ctx context.Context, toolName string, params jso
 	// handlers (HTTP, cache). When this call returns (timeout or
 	// success), cancel() fires, cancelling any in-flight HTTP
 	// request and unblocking ReadLoop.
-	transport.SetToolContext(&ctx)
-	defer transport.SetToolContext(nil)
-
 	id := transport.GenerateID("req")
+
+	transport.SetToolContext(id, &ctx)
+	defer transport.ClearToolContext(id)
 
 	ch := make(chan protocol.Message, 1)
 	transport.pending.Store(id, ch)

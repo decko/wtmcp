@@ -20,10 +20,11 @@ type HTTPResponse struct {
 // The core handles authentication, TLS, and domain allowlisting.
 func (p *Plugin) HTTP(method, path string, opts ...RequestOption) (*HTTPResponse, error) {
 	req := Message{
-		ID:     p.nextMsgID("http"),
-		Type:   TypeHTTPRequest,
-		Method: method,
-		Path:   path,
+		ID:       p.nextMsgID("http"),
+		ParentID: p.callID,
+		Type:     TypeHTTPRequest,
+		Method:   method,
+		Path:     path,
 	}
 	for _, opt := range opts {
 		opt(&req)
@@ -81,9 +82,10 @@ func WithURL(url string) RequestOption {
 // Returns the value and whether it was a cache hit.
 func (p *Plugin) CacheGet(key string) (json.RawMessage, bool, error) {
 	req := Message{
-		ID:   p.nextMsgID("cache"),
-		Type: TypeCacheGet,
-		Key:  key,
+		ID:       p.nextMsgID("cache"),
+		ParentID: p.callID,
+		Type:     TypeCacheGet,
+		Key:      key,
 	}
 
 	p.send(req)
@@ -109,10 +111,11 @@ func (p *Plugin) CacheSet(key string, value any, ttl int) error {
 	}
 
 	req := Message{
-		ID:    p.nextMsgID("cache"),
-		Type:  TypeCacheSet,
-		Key:   key,
-		Value: data,
+		ID:       p.nextMsgID("cache"),
+		ParentID: p.callID,
+		Type:     TypeCacheSet,
+		Key:      key,
+		Value:    data,
 	}
 	if ttl > 0 {
 		req.TTL = &ttl
@@ -137,8 +140,9 @@ func (p *Plugin) CacheSet(key string, value any, ttl int) error {
 // Returns the number of keys flushed.
 func (p *Plugin) CacheFlush() (int, error) {
 	req := Message{
-		ID:   p.nextMsgID("cache"),
-		Type: TypeCacheFlush,
+		ID:       p.nextMsgID("cache"),
+		ParentID: p.callID,
+		Type:     TypeCacheFlush,
 	}
 
 	p.send(req)
@@ -164,9 +168,10 @@ func (p *Plugin) CacheFlush() (int, error) {
 // CacheDel deletes a key from the core's cache.
 func (p *Plugin) CacheDel(key string) error {
 	req := Message{
-		ID:   p.nextMsgID("cache"),
-		Type: TypeCacheDel,
-		Key:  key,
+		ID:       p.nextMsgID("cache"),
+		ParentID: p.callID,
+		Type:     TypeCacheDel,
+		Key:      key,
 	}
 
 	p.send(req)
@@ -217,6 +222,7 @@ func WithReadEncoding(enc string) FileReadOption {
 func (p *Plugin) FileWrite(path string, content []byte, opts ...FileWriteOption) (string, error) {
 	req := Message{
 		ID:           p.nextMsgID("fw"),
+		ParentID:     p.callID,
 		Type:         TypeFileWrite,
 		Path:         path,
 		Content:      string(content),
@@ -253,6 +259,7 @@ func (p *Plugin) FileWrite(path string, content []byte, opts ...FileWriteOption)
 func (p *Plugin) FileWriteFrom(path, sourcePath string, opts ...FileWriteOption) (string, error) {
 	req := Message{
 		ID:         p.nextMsgID("fw"),
+		ParentID:   p.callID,
 		Type:       TypeFileWrite,
 		Path:       path,
 		SourcePath: sourcePath,
@@ -280,9 +287,10 @@ func (p *Plugin) FileWriteFrom(path, sourcePath string, opts ...FileWriteOption)
 // Returns the file content. Defaults to "text" encoding.
 func (p *Plugin) FileRead(path string, opts ...FileReadOption) ([]byte, error) {
 	req := Message{
-		ID:   p.nextMsgID("fr"),
-		Type: TypeFileRead,
-		Path: path,
+		ID:       p.nextMsgID("fr"),
+		ParentID: p.callID,
+		Type:     TypeFileRead,
+		Path:     path,
 	}
 	for _, opt := range opts {
 		opt(&req)
