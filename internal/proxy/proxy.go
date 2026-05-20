@@ -105,6 +105,7 @@ type Proxy struct {
 	rateLimiter   *ratelimit.Registry
 	retryConfig   config.RetryConfig
 	sleepFn       func(context.Context, time.Duration) error // nil → sleepContext
+	samlCooldowns sync.Map                                   // map[string]int64 (unix-nano)
 }
 
 // New creates a Proxy with the given HTTP client and max response body size.
@@ -429,7 +430,7 @@ func (p *Proxy) Execute(ctx context.Context, pluginName string, req protocol.Mes
 	}
 
 	if pa.IsKerberos && pa.Client != nil && !req.NoAuth {
-		resp = p.trySAMLSSO(ctx, pa, resp, pa.Client, fullURL, req, isIdempotent(method))
+		resp = p.trySAMLSSO(ctx, pluginName, pa, resp, pa.Client, fullURL, req, isIdempotent(method))
 	}
 
 	defer func() {

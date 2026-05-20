@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
@@ -842,5 +843,412 @@ func TestTrySAMLSSOSkipsReplayForPOST(t *testing.T) {
 	// The original 401 response should be returned since POST is not replayed
 	if resp.Status != 401 {
 		t.Errorf("status = %d, want 401 (original response for non-idempotent)", resp.Status)
+	}
+}
+
+// --- Tests for 200+SAML reactive SSO ---
+
+func TestTrySAMLSSO200WithSAMLForm(t *testing.T) {
+	var apiCalls atomic.Int32
+	mux := http.NewServeMux()
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/api/data", func(w http.ResponseWriter, _ *http.Request) {
+		n := apiCalls.Add(1)
+		if n == 1 {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = fmt.Fprintf(w, `<html><form action="%s/idp/sso">
+				<input type="hidden" name="SAMLRequest" value="req"/>
+			</form></html>`, srv.URL)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"data":"ok"}`)
+	})
+	mux.HandleFunc("/idp/sso", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, `<html><form action="%s/acs">
+			<input type="hidden" name="SAMLResponse" value="resp"/>
+		</form></html>`, srv.URL)
+	})
+	mux.HandleFunc("/acs", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+
+	jar, _ := cookiejar.New(nil)
+	client := srv.Client()
+	client.Jar = jar
+
+	p := newTestProxy(client)
+	pa := testPluginAuth(srv.URL)
+	pa.Client = client
+	pa.IsKerberos = true
+	p.RegisterPlugin("test200", pa)
+
+	resp := p.Execute(context.Background(), "test200", protocol.Message{
+		ID: "req-200saml", Type: protocol.TypeHTTPRequest,
+		Method: "GET", Path: "/api/data",
+	})
+	if resp.Status != 200 {
+		t.Errorf("status = %d, want 200", resp.Status)
+	}
+	if apiCalls.Load() != 2 {
+		t.Errorf("api calls = %d, want 2 (initial + retry after SSO)", apiCalls.Load())
+	}
+}
+
+func TestTrySAMLSSO200WithNormalHTML(t *testing.T) {
+	htmlBody := "<html><body>" + strings.Repeat("<p>Normal content.</p>\n", 100) + "</body></html>"
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(htmlBody))
+	}))
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := srv.Client()
+	client.Jar = jar
+
+	p := newTestProxy(client)
+	pa := testPluginAuth(srv.URL)
+	pa.Client = client
+	pa.IsKerberos = true
+	p.RegisterPlugin("testhtml", pa)
+
+	resp := p.Execute(context.Background(), "testhtml", protocol.Message{
+		ID: "req-html", Type: protocol.TypeHTTPRequest,
+		Method: "GET", Path: "/",
+	})
+	if resp.Status != 200 {
+		t.Errorf("status = %d, want 200", resp.Status)
+	}
+	// Body is JSON-encoded as a quoted string for text/html
+	var got string
+	if err := json.Unmarshal(resp.Body, &got); err != nil {
+		t.Fatalf("body is not a JSON string: %v", err)
+	}
+	if got != htmlBody {
+		t.Errorf("body length = %d, want %d (body should be preserved)", len(got), len(htmlBody))
+	}
+}
+
+func TestTrySAMLSSO200WithJSON(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := srv.Client()
+	client.Jar = jar
+
+	p := newTestProxy(client)
+	pa := testPluginAuth(srv.URL)
+	pa.Client = client
+	pa.IsKerberos = true
+	p.RegisterPlugin("testjson", pa)
+
+	resp := p.Execute(context.Background(), "testjson", protocol.Message{
+		ID: "req-json", Type: protocol.TypeHTTPRequest,
+		Method: "GET", Path: "/",
+	})
+	if resp.Status != 200 {
+		t.Errorf("status = %d, want 200", resp.Status)
+	}
+}
+
+func TestTrySAMLSSO200LargeHTML(t *testing.T) {
+	bigBody := "<html>" + strings.Repeat("x", 2*1024*1024) + "</html>"
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(bigBody))
+	}))
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := srv.Client()
+	client.Jar = jar
+
+	p := newTestProxy(client)
+	pa := testPluginAuth(srv.URL)
+	pa.Client = client
+	pa.IsKerberos = true
+	p.RegisterPlugin("testlarge", pa)
+
+	resp := p.Execute(context.Background(), "testlarge", protocol.Message{
+		ID: "req-large", Type: protocol.TypeHTTPRequest,
+		Method: "GET", Path: "/",
+	})
+	if resp.Status != 200 {
+		t.Errorf("status = %d, want 200", resp.Status)
+	}
+	// Body should NOT be truncated — peek only reads 8KB
+	if len(resp.Body) < 2*1024*1024 {
+		t.Errorf("body length = %d, want >= 2MB (body should not be truncated by peek)", len(resp.Body))
+	}
+}
+
+func TestTrySAMLSSO200POSTNotReplayed(t *testing.T) {
+	var apiCalls atomic.Int32
+	mux := http.NewServeMux()
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/api/create", func(w http.ResponseWriter, _ *http.Request) {
+		apiCalls.Add(1)
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, `<html><form action="%s/idp">
+			<input type="hidden" name="SAMLRequest" value="req"/>
+		</form></html>`, srv.URL)
+	})
+	mux.HandleFunc("/idp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, `<html><form action="%s/acs">
+			<input type="hidden" name="SAMLResponse" value="resp"/>
+		</form></html>`, srv.URL)
+	})
+	mux.HandleFunc("/acs", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+
+	jar, _ := cookiejar.New(nil)
+	client := srv.Client()
+	client.Jar = jar
+
+	p := newTestProxy(client)
+	pa := testPluginAuth(srv.URL)
+	pa.Client = client
+	pa.IsKerberos = true
+	p.RegisterPlugin("testpost200", pa)
+
+	resp := p.Execute(context.Background(), "testpost200", protocol.Message{
+		ID: "req-post200", Type: protocol.TypeHTTPRequest,
+		Method: "POST", Path: "/api/create",
+	})
+	if apiCalls.Load() != 1 {
+		t.Errorf("api calls = %d, want 1 (POST should not be replayed)", apiCalls.Load())
+	}
+	if resp.Status != 200 {
+		t.Errorf("status = %d, want 200", resp.Status)
+	}
+}
+
+func TestTrySAMLSSO200FalsePositive(t *testing.T) {
+	htmlBody := `<html><body>
+		<form class="search"><input type="text" name="q"/></form>
+		<p>The SAMLRequest parameter is used for SAML POST binding.</p>
+	</body></html>`
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(htmlBody))
+	}))
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := srv.Client()
+	client.Jar = jar
+
+	p := newTestProxy(client)
+	pa := testPluginAuth(srv.URL)
+	pa.Client = client
+	pa.IsKerberos = true
+	p.RegisterPlugin("testfp", pa)
+
+	resp := p.Execute(context.Background(), "testfp", protocol.Message{
+		ID: "req-fp", Type: protocol.TypeHTTPRequest,
+		Method: "GET", Path: "/",
+	})
+	if resp.Status != 200 {
+		t.Errorf("status = %d, want 200", resp.Status)
+	}
+	var got string
+	if err := json.Unmarshal(resp.Body, &got); err != nil {
+		t.Fatalf("body is not a JSON string: %v", err)
+	}
+	if got != htmlBody {
+		t.Error("body should be returned unchanged on false positive")
+	}
+}
+
+func TestTrySAMLSSO200Cooldown(t *testing.T) {
+	var idpCalls atomic.Int32
+	mux := http.NewServeMux()
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/api", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, `<html><form action="%s/idp">
+			<input type="hidden" name="SAMLRequest" value="req"/>
+		</form></html>`, srv.URL)
+	})
+	mux.HandleFunc("/idp", func(w http.ResponseWriter, _ *http.Request) {
+		idpCalls.Add(1)
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, `<html><form action="%s/acs">
+			<input type="hidden" name="SAMLResponse" value="resp"/>
+		</form></html>`, srv.URL)
+	})
+	mux.HandleFunc("/acs", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+
+	jar, _ := cookiejar.New(nil)
+	client := srv.Client()
+	client.Jar = jar
+
+	p := newTestProxy(client)
+	pa := testPluginAuth(srv.URL)
+	pa.Client = client
+	pa.IsKerberos = true
+	p.RegisterPlugin("testcooldown", pa)
+
+	// First call triggers SSO
+	p.Execute(context.Background(), "testcooldown", protocol.Message{
+		ID: "req-cd1", Type: protocol.TypeHTTPRequest,
+		Method: "GET", Path: "/api",
+	})
+	first := idpCalls.Load()
+
+	// Second call should be skipped by cooldown
+	p.Execute(context.Background(), "testcooldown", protocol.Message{
+		ID: "req-cd2", Type: protocol.TypeHTTPRequest,
+		Method: "GET", Path: "/api",
+	})
+	second := idpCalls.Load()
+
+	if second != first {
+		t.Errorf("IdP calls after cooldown = %d, want %d (cooldown should prevent second SSO)", second, first)
+	}
+}
+
+func TestTrySAMLSSO200RetryStillSAML(t *testing.T) {
+	var apiCalls atomic.Int32
+	mux := http.NewServeMux()
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/api", func(w http.ResponseWriter, _ *http.Request) {
+		apiCalls.Add(1)
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, `<html><form action="%s/idp">
+			<input type="hidden" name="SAMLRequest" value="req"/>
+		</form></html>`, srv.URL)
+	})
+	mux.HandleFunc("/idp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, `<html><form action="%s/acs">
+			<input type="hidden" name="SAMLResponse" value="resp"/>
+		</form></html>`, srv.URL)
+	})
+	mux.HandleFunc("/acs", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+
+	jar, _ := cookiejar.New(nil)
+	client := srv.Client()
+	client.Jar = jar
+
+	p := newTestProxy(client)
+	pa := testPluginAuth(srv.URL)
+	pa.Client = client
+	pa.IsKerberos = true
+	p.RegisterPlugin("testloop", pa)
+
+	p.Execute(context.Background(), "testloop", protocol.Message{
+		ID: "req-loop", Type: protocol.TypeHTTPRequest,
+		Method: "GET", Path: "/api",
+	})
+	if apiCalls.Load() > 2 {
+		t.Errorf("api calls = %d, want at most 2 (initial + retry, no loop)", apiCalls.Load())
+	}
+}
+
+func TestTrySAMLSSO200ContentTypeCharset(t *testing.T) {
+	var apiCalls atomic.Int32
+	mux := http.NewServeMux()
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		n := apiCalls.Add(1)
+		if n == 1 {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprintf(w, `<html><form action="%s/idp">
+				<input type="hidden" name="SAMLRequest" value="req"/>
+			</form></html>`, srv.URL)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	})
+	mux.HandleFunc("/idp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, `<html><form action="%s/acs">
+			<input type="hidden" name="SAMLResponse" value="resp"/>
+		</form></html>`, srv.URL)
+	})
+	mux.HandleFunc("/acs", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+
+	jar, _ := cookiejar.New(nil)
+	client := srv.Client()
+	client.Jar = jar
+
+	p := newTestProxy(client)
+	pa := testPluginAuth(srv.URL)
+	pa.Client = client
+	pa.IsKerberos = true
+	p.RegisterPlugin("testcharset", pa)
+
+	resp := p.Execute(context.Background(), "testcharset", protocol.Message{
+		ID: "req-charset", Type: protocol.TypeHTTPRequest,
+		Method: "GET", Path: "/",
+	})
+	if apiCalls.Load() != 2 {
+		t.Errorf("api calls = %d, want 2 (charset in content-type should be handled)", apiCalls.Load())
+	}
+	if resp.Status != 200 {
+		t.Errorf("status = %d, want 200", resp.Status)
+	}
+}
+
+func TestTrySAMLSSO200UppercaseForm(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><FORM action="https://idp.example.com/sso">
+			<INPUT TYPE="hidden" NAME="SAMLRequest" VALUE="req"/>
+		</FORM></html>`)
+	}))
+	defer srv.Close()
+
+	peek := []byte(`<html><FORM action="https://idp.example.com/sso">
+		<INPUT TYPE="hidden" NAME="SAMLRequest" VALUE="req"/>
+	</FORM></html>`)
+	if !isSAMLChallenge(peek) {
+		t.Error("isSAMLChallenge should detect uppercase <FORM> tags")
+	}
+}
+
+func TestIsSAMLChallengeNegative(t *testing.T) {
+	tests := []struct {
+		name string
+		peek string
+	}{
+		{"no form", `<html><p>SAMLRequest mentioned in text</p></html>`},
+		{"form without SAML", `<html><form action="/search"><input type="text"/></form></html>`},
+		{"empty", ""},
+		{"json-like", `{"SAMLRequest": "value"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if isSAMLChallenge([]byte(tt.peek)) {
+				t.Errorf("isSAMLChallenge should return false for %q", tt.name)
+			}
+		})
 	}
 }

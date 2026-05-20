@@ -3,12 +3,14 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"golang.org/x/net/html"
 
@@ -270,19 +272,139 @@ func handleSAMLSSO(ctx context.Context, client *http.Client, body []byte, baseUR
 	return false
 }
 
-// trySAMLSSO checks if an HTTP response is a SAML SSO auth redirect
+const samlInitBodyLimit = 1 << 20 // 1MB
+const samlPeekSize = 8 * 1024     // 8KB
+
+// peekReadCloser wraps a MultiReader (peek + original body) while
+// preserving the original body's Close(). Without this, wrapping in
+// io.NopCloser would leak the TCP connection.
+type peekReadCloser struct {
+	io.Reader
+	orig io.Closer
+}
+
+func (p *peekReadCloser) Close() error { return p.orig.Close() }
+
+// isSAMLChallenge checks if an 8KB peek from a 200 text/html
+// response looks like a SAML challenge. Fast substring pre-filter;
+// structural confirmation via parseSAMLForm happens after the full
+// body is read.
+func isSAMLChallenge(peek []byte) bool {
+	lower := bytes.ToLower(peek)
+	return bytes.Contains(lower, []byte("<form")) &&
+		(bytes.Contains(peek, []byte("SAMLRequest")) ||
+			bytes.Contains(peek, []byte("SAMLResponse")))
+}
+
+// trySAMLSSO checks if an HTTP response is a SAML SSO auth challenge
 // and, if so, follows the SSO flow. On success, it retries the
 // original request (only for idempotent methods) and returns the new
-// response. On failure (or if not an auth redirect), it returns the
+// response. On failure (or if not an auth challenge), it returns the
 // original response unchanged.
 //
+// Handles two trigger patterns:
+//   - Classic: 401/403 + text/html (via handleReactiveSAML)
+//   - Session expiry: 200 + text/html with SAMLRequest form in body
+//     (some SPs return 200 with a SAML form instead of 401/403)
+//
 // The caller must not have read resp.Body yet.
-func (p *Proxy) trySAMLSSO(ctx context.Context, pa *PluginAuth, resp *http.Response, client *http.Client, fullURL string, req protocol.Message, idempotent bool) *http.Response {
+func (p *Proxy) trySAMLSSO(ctx context.Context, pluginName string, pa *PluginAuth, resp *http.Response, client *http.Client, fullURL string, req protocol.Message, idempotent bool) *http.Response {
 	ct := resp.Header.Get("Content-Type")
-	if !isAuthRedirect(resp.StatusCode, ct) {
+
+	if isAuthRedirect(resp.StatusCode, ct) {
+		return p.handleReactiveSAML(ctx, pa, resp, client, fullURL, req, idempotent)
+	}
+
+	if resp.StatusCode != 200 || !strings.Contains(ct, "text/html") {
 		return resp
 	}
 
+	if v, ok := p.samlCooldowns.Load(pluginName); ok {
+		if time.Since(time.Unix(0, v.(int64))) < 60*time.Second {
+			return resp
+		}
+	}
+
+	peek := make([]byte, samlPeekSize)
+	n, err := io.ReadFull(resp.Body, peek)
+	peek = peek[:n]
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		resp.Body = &peekReadCloser{
+			Reader: io.MultiReader(bytes.NewReader(peek), resp.Body),
+			orig:   resp.Body,
+		}
+		return resp
+	}
+
+	if !isSAMLChallenge(peek) {
+		resp.Body = &peekReadCloser{
+			Reader: io.MultiReader(bytes.NewReader(peek), resp.Body),
+			orig:   resp.Body,
+		}
+		return resp
+	}
+
+	p.samlCooldowns.Store(pluginName, time.Now().UnixNano())
+
+	rest, err := io.ReadAll(io.LimitReader(resp.Body, samlInitBodyLimit-int64(n)))
+	resp.Body.Close() //nolint:errcheck,gosec
+	if err != nil {
+		log.Printf("proxy: saml: error reading SAML body: %v", err)
+		body := append(peek, rest...) //nolint:gocritic
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp
+	}
+	body := make([]byte, 0, n+len(rest))
+	body = append(body, peek...)
+	body = append(body, rest...)
+
+	log.Printf("proxy: saml: detected SAML challenge in 200 response from %s", fullURL) //nolint:gosec
+
+	baseURL := pa.BaseURL
+	if baseURL == "" {
+		if u, err := url.Parse(fullURL); err == nil {
+			baseURL = u.Scheme + "://" + u.Host
+		}
+	}
+
+	ssoOK := false
+	respBase := resp.Request.URL.String()
+	action, formData, ok := parseSAMLForm(body, respBase)
+	if ok && formData.Get("SAMLRequest") != "" {
+		err := followSAMLFormChain(ctx, client, action, formData, baseURL, pa.AllowedDomains)
+		ssoOK = (err == nil)
+	}
+	if !ssoOK && action == "" {
+		ssoOK = handleSAMLSSO(ctx, client, body, baseURL, pa.AllowedDomains)
+	}
+
+	if !ssoOK {
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp
+	}
+
+	if !idempotent {
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp
+	}
+
+	retryReq, err := p.buildRequest(ctx, fullURL, req)
+	if err != nil {
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp
+	}
+	retryResp, err := client.Do(retryReq)
+	if err != nil {
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp
+	}
+	return retryResp
+}
+
+// handleReactiveSAML handles the classic 401/403 auth redirect SAML
+// flow. Extracted from trySAMLSSO to keep the 200-detection path
+// separate.
+func (p *Proxy) handleReactiveSAML(ctx context.Context, pa *PluginAuth, resp *http.Response, client *http.Client, fullURL string, req protocol.Message, idempotent bool) *http.Response {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, samlInitBodyLimit))
 	resp.Body.Close() //nolint:errcheck,gosec
 	if err != nil {
@@ -312,7 +434,6 @@ func (p *Proxy) trySAMLSSO(ctx context.Context, pa *PluginAuth, resp *http.Respo
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		return resp
 	}
-
 	retryResp, err := client.Do(retryReq)
 	if err != nil {
 		resp.Body = io.NopCloser(bytes.NewReader(body))
@@ -320,8 +441,6 @@ func (p *Proxy) trySAMLSSO(ctx context.Context, pa *PluginAuth, resp *http.Respo
 	}
 	return retryResp
 }
-
-const samlInitBodyLimit = 1 << 20 // 1MB
 
 // InitSAMLSession proactively authenticates by following a SAML SSO
 // flow. It GETs initURL, detects whether the response contains a
