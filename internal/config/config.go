@@ -493,12 +493,13 @@ func findTopLevelPattern(s, pattern string) int {
 func resolveVarExpression(inner string, lookup func(string) (string, bool)) string {
 	// Check for |hostname modifier: ${VAR|hostname}
 	// Only match if not inside nested ${...}
-	if idx := findTopLevelPattern(inner, "|hostname"); idx >= 0 {
+	if idx := findTopLevelPattern(inner, "|hostname"); idx >= 0 && idx+len("|hostname") == len(inner) {
 		varName := inner[:idx]
 		if val, ok := lookup(varName); ok && val != "" {
-			if u, err := url.Parse(val); err == nil {
+			if u, err := url.Parse(val); err == nil && u.Hostname() != "" {
 				return u.Hostname()
 			}
+			log.Printf("config: ${%s|hostname}: could not extract hostname (missing scheme?)", varName)
 		}
 		return ""
 	}

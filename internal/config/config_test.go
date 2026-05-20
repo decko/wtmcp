@@ -156,6 +156,29 @@ func TestResolveVarsHostnameModifier(t *testing.T) {
 	if got := ResolveVars("${MISSING|hostname}", vars); got != "" {
 		t.Errorf("ResolveVars(${MISSING|hostname}) = %q, want empty string", got)
 	}
+
+	// Test |hostname exact match — |hostname2 should NOT trigger hostname extraction
+	vars["SOME_VAR"] = "https://example.com"
+	if got := ResolveVars("${SOME_VAR|hostname2}", vars); got == "example.com" {
+		t.Error("${SOME_VAR|hostname2} should not extract hostname (unknown modifier)")
+	}
+
+	// Test |hostnamestrip suffix overlap — should NOT trigger hostname extraction
+	if got := ResolveVars("${SOME_VAR|hostnamestrip}", vars); got == "example.com" {
+		t.Error("${SOME_VAR|hostnamestrip} should not extract hostname (unknown modifier)")
+	}
+
+	// Test |hostname with scheme-less URL returns empty
+	vars["BARE_HOST"] = "example.com"
+	if got := ResolveVars("${BARE_HOST|hostname}", vars); got != "" {
+		t.Errorf("${BARE_HOST|hostname} = %q, want empty (no scheme)", got)
+	}
+
+	// Test |hostname with protocol-relative URL
+	vars["PROTO_REL"] = "//example.com:8080/path"
+	if got := ResolveVars("${PROTO_REL|hostname}", vars); got != "example.com" {
+		t.Errorf("${PROTO_REL|hostname} = %q, want example.com", got)
+	}
 }
 
 func TestResolveVarsNestedDefaults(t *testing.T) {
