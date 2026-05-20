@@ -299,3 +299,78 @@ tools:
       max_results:
         type: integer
         default: 20
+
+  - name: gitlab_create_mr_discussion
+    access: write
+    description: >
+      Post an inline discussion comment on an MR diff line. Requires
+      new_path and at least one of new_line (added/context lines) or
+      old_line (removed/context lines). DiffRefs SHAs are auto-fetched
+      from the MR if any is omitted (provide all three or none).
+      Defaults to dry_run=true.
+    params:
+      instance:
+        type: string
+      project_id:
+        type: string
+        required: true
+        description: "Project ID or path (e.g. 'group/project')"
+      mr_iid:
+        type: integer
+        required: true
+        description: "Merge request internal ID"
+      body:
+        type: string
+        required: true
+        description: "Comment text (markdown)"
+      new_path:
+        type: string
+        required: true
+        description: "File path in the new version of the diff"
+      old_path:
+        type: string
+        description: "File path in old version (defaults to new_path)"
+      new_line:
+        type: integer
+        description: "Line number in the new file (for added/context lines)"
+      old_line:
+        type: integer
+        description: "Line number in the old file (for removed/context lines)"
+      base_sha:
+        type: string
+        description: "Base commit SHA (auto-fetched from MR if omitted)"
+      head_sha:
+        type: string
+        description: "Head commit SHA (auto-fetched from MR if omitted)"
+      start_sha:
+        type: string
+        description: "Start commit SHA (auto-fetched from MR if omitted)"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without posting (default: true)"
+
+  - name: gitlab_add_mr_note
+    access: write
+    description: >
+      Post a general comment on an MR (not inline). Use this for
+      overall feedback or summary comments. Defaults to dry_run=true.
+    params:
+      instance:
+        type: string
+      project_id:
+        type: string
+        required: true
+        description: "Project ID or path (e.g. 'group/project')"
+      mr_iid:
+        type: integer
+        required: true
+        description: "Merge request internal ID"
+      body:
+        type: string
+        required: true
+        description: "Comment text (markdown)"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without posting (default: true)"

@@ -33,6 +33,10 @@ func main() {
 	p.Handle("gitlab_get_todos", toolGetTodos)
 	p.Handle("gitlab_list_merge_requests", toolListMergeRequests)
 
+	// Write tools
+	p.Handle("gitlab_create_mr_discussion", toolCreateMRDiscussion)
+	p.Handle("gitlab_add_mr_note", toolAddMRNote)
+
 	if err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "handler: %v\n", err)
 		os.Exit(1)

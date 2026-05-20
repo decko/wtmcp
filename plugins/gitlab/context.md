@@ -155,7 +155,24 @@ For full content, use the detail tools (`gitlab_get_merge_request`,
 - **ID**: global numeric ID. Returned in responses but rarely
   needed as input.
 
-### Read-Only Access
+### Writing MR Comments
 
-This plugin is read-only. It cannot create, modify, or merge
-MRs, issues, or any other GitLab resources.
+**Post an inline discussion on a diff line:**
+```
+gitlab_create_mr_discussion(project_id="team/myproject", mr_iid=42,
+    body="Consider using a constant here",
+    new_path="src/main.go", new_line=15)
+```
+
+For removed lines, use `old_line` instead of `new_line`. For context
+(unchanged) lines, provide both. The DiffRefs SHAs (`base_sha`,
+`head_sha`, `start_sha`) are auto-fetched from the MR if omitted.
+
+**Post a general comment on an MR:**
+```
+gitlab_add_mr_note(project_id="team/myproject", mr_iid=42,
+    body="Overall this looks good, just a few minor suggestions.")
+```
+
+Both tools default to `dry_run=true` — set `dry_run=false` to
+actually post the comment.
