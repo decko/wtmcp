@@ -729,9 +729,12 @@ func StripAuthOnCrossDomainRedirect(req *http.Request, via []*http.Request) erro
 	if len(via) > 0 {
 		origHost := via[0].URL.Hostname()
 		newHost := req.URL.Hostname()
-		origNorm, _ := domaincheck.Normalize(origHost)
-		newNorm, _ := domaincheck.Normalize(newHost)
-		if origNorm != newNorm {
+		origNorm, err1 := domaincheck.Normalize(origHost)
+		newNorm, err2 := domaincheck.Normalize(newHost)
+		if err1 != nil || err2 != nil || origNorm != newNorm {
+			if err1 != nil || err2 != nil {
+				log.Printf("proxy: stripping auth headers on redirect: hostname normalization failed") //nolint:gosec // no user data in this message
+			}
 			req.Header.Del("Authorization")
 			req.Header.Del("Cookie")
 			req.Header.Del("Private-Token")

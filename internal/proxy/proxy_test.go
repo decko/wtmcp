@@ -724,6 +724,45 @@ func TestStripAuthOnCrossDomainRedirect(t *testing.T) {
 			t.Error("expected error after 10 redirects")
 		}
 	})
+
+	t.Run("both hosts fail normalization strips headers", func(t *testing.T) {
+		// Labels > 63 chars fail IDNA normalization
+		longLabel := strings.Repeat("a", 64)
+		via := []*http.Request{{URL: mustParse("https://" + longLabel + ".example.com/a")}}
+		req := &http.Request{
+			URL: mustParse("https://" + longLabel + ".other.com/b"),
+			Header: http.Header{
+				"Authorization": {"Bearer tok"},
+				"Cookie":        {"session=abc"},
+			},
+		}
+		if err := StripAuthOnCrossDomainRedirect(req, via); err != nil {
+			t.Fatal(err)
+		}
+		if req.Header.Get("Authorization") != "" {
+			t.Error("Authorization should be stripped when both hosts fail normalization")
+		}
+		if req.Header.Get("Cookie") != "" {
+			t.Error("Cookie should be stripped when both hosts fail normalization")
+		}
+	})
+
+	t.Run("one host fails normalization strips headers", func(t *testing.T) {
+		longLabel := strings.Repeat("b", 64)
+		via := []*http.Request{{URL: mustParse("https://valid.example.com/a")}}
+		req := &http.Request{
+			URL: mustParse("https://" + longLabel + ".evil.com/b"),
+			Header: http.Header{
+				"Authorization": {"Bearer tok"},
+			},
+		}
+		if err := StripAuthOnCrossDomainRedirect(req, via); err != nil {
+			t.Fatal(err)
+		}
+		if req.Header.Get("Authorization") != "" {
+			t.Error("Authorization should be stripped when redirect host fails normalization")
+		}
+	})
 }
 
 func TestSafeDialerAllowPrivate(t *testing.T) {
