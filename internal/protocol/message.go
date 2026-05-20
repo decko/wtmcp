@@ -13,6 +13,7 @@ import (
 // the message Type.
 type Message struct {
 	ID       string `json:"id"`
+	ParentID string `json:"parent_id,omitempty"`
 	Type     string `json:"type"`
 	Protocol string `json:"protocol,omitempty"`
 

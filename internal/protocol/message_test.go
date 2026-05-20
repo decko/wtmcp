@@ -144,3 +144,50 @@ func TestUnmarshalJSON_HasContent(t *testing.T) {
 		})
 	}
 }
+
+func TestParentIDRoundtrip(t *testing.T) {
+	msg := Message{
+		ID:       "http-1",
+		ParentID: "req-42",
+		Type:     TypeHTTPRequest,
+		Method:   "GET",
+		Path:     "/api/test",
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded Message
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.ParentID != "req-42" {
+		t.Errorf("ParentID = %q, want req-42", decoded.ParentID)
+	}
+}
+
+func TestParentIDOmittedWhenEmpty(t *testing.T) {
+	msg := Message{
+		ID:   "http-1",
+		Type: TypeHTTPRequest,
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	raw := string(data)
+	if contains(raw, "parent_id") {
+		t.Errorf("empty ParentID should be omitted, got: %s", raw)
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

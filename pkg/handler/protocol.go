@@ -11,6 +11,7 @@ import "encoding/json"
 // Fields are selectively populated based on Type.
 type Message struct {
 	ID       string `json:"id"`
+	ParentID string `json:"parent_id,omitempty"`
 	Type     string `json:"type"`
 	Protocol string `json:"protocol,omitempty"`
 
