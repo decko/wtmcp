@@ -95,6 +95,20 @@ def cache_set(key, value, ttl=None):
     _recv()  # consume ack
 
 
+def cache_flush():
+    """Flush all entries in this plugin's cache namespace."""
+    _send({"id": _gen_id("cache"), "type": "cache_flush"})
+    _recv()  # consume ack
+
+
+def invalidate_cache():
+    """Flush plugin cache after a write operation (best-effort)."""
+    try:
+        cache_flush()
+    except Exception:
+        pass
+
+
 def _discover_username():
     """Get the authenticated user's login name from /user."""
     status, body, _ = http("GET", "/user")
@@ -124,6 +138,9 @@ def log(message):
 
 def main():
     from tools import TOOLS
+    from tools_write import WRITE_TOOLS
+
+    TOOLS.update(WRITE_TOOLS)
 
     log("handler starting")
 

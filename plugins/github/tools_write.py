@@ -1,0 +1,284 @@
+"""GitHub write tool implementations.
+
+All write tools default to dry_run=true for safety.
+"""
+
+import handler
+from tools import _check_rate_limit, _http_error, _split_repo, _validate_repo
+
+_VALID_EVENTS = {"COMMENT", "REQUEST_CHANGES", "APPROVE"}
+_MAX_BODY_LEN = 65000
+_MAX_COMMENTS = 50
+
+
+def _fetch_head_sha(owner, name, pr_number):
+    """Fetch the HEAD SHA of a PR via a fresh (uncached) GET."""
+    status, body, _ = handler.http("GET", f"/repos/{owner}/{name}/pulls/{pr_number}")
+    if status < 200 or status >= 300 or not isinstance(body, dict):
+        return None
+    return (body.get("head") or {}).get("sha") or None
+
+
+def _validate_comment(comment, index):
+    """Validate a single inline comment object."""
+    if not isinstance(comment, dict):
+        raise ValueError(f"comments[{index}]: expected an object, got {type(comment).__name__}")
+    path = comment.get("path")
+    if not path or not isinstance(path, str):
+        raise ValueError(f"comments[{index}]: 'path' is required and must be a non-empty string")
+    line = comment.get("line")
+    if isinstance(line, float) and line != int(line):
+        raise ValueError(f"comments[{index}]: 'line' must be an integer, got {line}")
+    if not isinstance(line, (int, float)) or int(line) <= 0:
+        raise ValueError(f"comments[{index}]: 'line' is required and must be a positive integer")
+    body = comment.get("body")
+    if not body or not isinstance(body, str) or not body.strip():
+        raise ValueError(f"comments[{index}]: 'body' is required and must be a non-empty string")
+    result = {"path": path, "line": int(line), "body": body}
+    start_line = comment.get("start_line")
+    if start_line is not None:
+        start_line = int(start_line)
+        if start_line <= 0:
+            raise ValueError(f"comments[{index}]: 'start_line' must be a positive integer")
+        if start_line >= int(line):
+            raise ValueError(f"comments[{index}]: 'start_line' ({start_line}) must be less than 'line' ({int(line)})")
+        result["start_line"] = start_line
+    return result
+
+
+def create_review(params):
+    """Submit a PR review with optional inline comments."""
+    repo = params.get("repo", "")
+    pr_number = int(params.get("pr_number", 0))
+    body = params.get("body", "")
+    event = (params.get("event") or "COMMENT").upper()
+    comments_raw = params.get("comments") or []
+    commit_id = params.get("commit_id", "")
+    confirm_approve = params.get("confirm_approve", False)
+    dry_run = params.get("dry_run", True)
+
+    _validate_repo(repo)
+    owner, name = _split_repo(repo)
+
+    if pr_number <= 0:
+        raise ValueError("pr_number must be a positive integer")
+
+    if event not in _VALID_EVENTS:
+        raise ValueError(f"invalid event: {event!r} (valid: {', '.join(sorted(_VALID_EVENTS))})")
+
+    if event == "APPROVE" and not confirm_approve:
+        return {
+            "warning": "APPROVE will post an approval review under your identity. "
+            "This can satisfy branch protection rules and enable merge. "
+            "Re-call with confirm_approve=true to proceed.",
+            "dry_run": True,
+            "action": "github_create_review",
+            "repo": repo,
+            "pr_number": pr_number,
+            "event": event,
+        }
+
+    if event == "REQUEST_CHANGES" and not body and not comments_raw:
+        raise ValueError("REQUEST_CHANGES requires a body or at least one comment")
+
+    if body and len(body) > _MAX_BODY_LEN:
+        raise ValueError(f"body exceeds {_MAX_BODY_LEN} character limit ({len(body)} chars)")
+
+    if not isinstance(comments_raw, list):
+        raise ValueError(f"comments must be a list, got {type(comments_raw).__name__}")
+    if len(comments_raw) > _MAX_COMMENTS:
+        raise ValueError(f"too many comments ({len(comments_raw)}): maximum is {_MAX_COMMENTS}")
+
+    comments = [_validate_comment(c, i) for i, c in enumerate(comments_raw)]
+
+    if dry_run:
+        preview = {
+            "dry_run": True,
+            "action": "github_create_review",
+            "repo": repo,
+            "pr_number": pr_number,
+            "event": event,
+            "comment_count": len(comments),
+        }
+        if body:
+            preview["body_preview"] = body[:200]
+        if not commit_id:
+            sha = _fetch_head_sha(owner, name, pr_number)
+            if sha:
+                preview["commit_id"] = sha
+        else:
+            preview["commit_id"] = commit_id
+        return preview
+
+    if not commit_id:
+        commit_id = _fetch_head_sha(owner, name, pr_number)
+        if not commit_id:
+            raise ValueError(
+                f"could not resolve HEAD SHA for PR #{pr_number} — provide commit_id explicitly or verify the PR exists"
+            )
+
+    api_body = {"event": event, "commit_id": commit_id}
+    if body:
+        api_body["body"] = body
+    if comments:
+        api_body["comments"] = comments
+
+    status, resp, headers = handler.http(
+        "POST",
+        f"/repos/{owner}/{name}/pulls/{pr_number}/reviews",
+        body=api_body,
+    )
+    if status < 200 or status >= 300:
+        return _http_error(status, resp)
+
+    handler.invalidate_cache()
+    result = {
+        "id": resp.get("id") if isinstance(resp, dict) else None,
+        "state": resp.get("state") if isinstance(resp, dict) else None,
+        "html_url": resp.get("html_url") if isinstance(resp, dict) else None,
+    }
+    _check_rate_limit(headers, result)
+    return result
+
+
+def add_pr_comment(params):
+    """Post a single inline review comment on a PR diff."""
+    repo = params.get("repo", "")
+    pr_number = int(params.get("pr_number", 0))
+    path = params.get("path", "")
+    line = int(params.get("line", 0))
+    body = params.get("body", "")
+    commit_id = params.get("commit_id", "")
+    side = (params.get("side") or "RIGHT").upper()
+    start_line = params.get("start_line")
+    dry_run = params.get("dry_run", True)
+
+    _validate_repo(repo)
+    owner, name = _split_repo(repo)
+
+    if pr_number <= 0:
+        raise ValueError("pr_number must be a positive integer")
+    if not path:
+        raise ValueError("path is required")
+    if line <= 0:
+        raise ValueError("line must be a positive integer")
+    if not body or not body.strip():
+        raise ValueError("body is required and must be non-empty")
+    if len(body) > _MAX_BODY_LEN:
+        raise ValueError(f"body exceeds {_MAX_BODY_LEN} character limit")
+    if side not in ("LEFT", "RIGHT"):
+        raise ValueError(f"invalid side: {side!r} (valid: LEFT, RIGHT)")
+
+    validated_start_line = None
+    if start_line is not None:
+        validated_start_line = int(start_line)
+        if validated_start_line <= 0:
+            raise ValueError("start_line must be a positive integer")
+        if validated_start_line >= line:
+            raise ValueError(f"start_line ({validated_start_line}) must be less than line ({line})")
+
+    if dry_run:
+        preview = {
+            "dry_run": True,
+            "action": "github_add_pr_comment",
+            "repo": repo,
+            "pr_number": pr_number,
+            "path": path,
+            "line": line,
+            "side": side,
+            "body_preview": body[:200],
+        }
+        if validated_start_line is not None:
+            preview["start_line"] = validated_start_line
+        if not commit_id:
+            sha = _fetch_head_sha(owner, name, pr_number)
+            if sha:
+                preview["commit_id"] = sha
+        else:
+            preview["commit_id"] = commit_id
+        return preview
+
+    if not commit_id:
+        commit_id = _fetch_head_sha(owner, name, pr_number)
+        if not commit_id:
+            raise ValueError(
+                f"could not resolve HEAD SHA for PR #{pr_number} — provide commit_id explicitly or verify the PR exists"
+            )
+
+    api_body = {
+        "body": body,
+        "commit_id": commit_id,
+        "path": path,
+        "line": line,
+        "side": side,
+        "subject_type": "line",
+    }
+    if validated_start_line is not None:
+        api_body["start_line"] = validated_start_line
+        api_body["start_side"] = side
+
+    status, resp, headers = handler.http(
+        "POST",
+        f"/repos/{owner}/{name}/pulls/{pr_number}/comments",
+        body=api_body,
+    )
+    if status < 200 or status >= 300:
+        return _http_error(status, resp)
+
+    handler.invalidate_cache()
+    result = {
+        "id": resp.get("id") if isinstance(resp, dict) else None,
+        "html_url": resp.get("html_url") if isinstance(resp, dict) else None,
+    }
+    _check_rate_limit(headers, result)
+    return result
+
+
+def add_comment(params):
+    """Post a conversation comment on an issue or PR."""
+    repo = params.get("repo", "")
+    issue_number = int(params.get("issue_number", 0))
+    body = params.get("body", "")
+    dry_run = params.get("dry_run", True)
+
+    _validate_repo(repo)
+    owner, name = _split_repo(repo)
+
+    if issue_number <= 0:
+        raise ValueError("issue_number must be a positive integer")
+    if not body or not body.strip():
+        raise ValueError("body is required and must be non-empty")
+    if len(body) > _MAX_BODY_LEN:
+        raise ValueError(f"body exceeds {_MAX_BODY_LEN} character limit")
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "action": "github_add_comment",
+            "repo": repo,
+            "issue_number": issue_number,
+            "body_preview": body[:200],
+        }
+
+    status, resp, headers = handler.http(
+        "POST",
+        f"/repos/{owner}/{name}/issues/{issue_number}/comments",
+        body={"body": body},
+    )
+    if status < 200 or status >= 300:
+        return _http_error(status, resp)
+
+    handler.invalidate_cache()
+    result = {
+        "id": resp.get("id") if isinstance(resp, dict) else None,
+        "html_url": resp.get("html_url") if isinstance(resp, dict) else None,
+    }
+    _check_rate_limit(headers, result)
+    return result
+
+
+WRITE_TOOLS = {
+    "github_create_review": create_review,
+    "github_add_pr_comment": add_pr_comment,
+    "github_add_comment": add_comment,
+}

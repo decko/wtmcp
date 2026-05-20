@@ -256,6 +256,123 @@ tools:
         default: 0
         description: "Starting index for pagination"
 
+  - name: github_create_review
+    access: write
+    description: >
+      Submit a PR review with optional inline comments and a state.
+      Events: COMMENT (default), REQUEST_CHANGES, APPROVE. APPROVE
+      requires confirm_approve=true. Defaults to dry_run=true.
+    params:
+      repo:
+        type: string
+        required: true
+        description: "Repository as owner/repo"
+      pr_number:
+        type: integer
+        required: true
+      body:
+        type: string
+        description: "Review summary body (markdown)"
+      event:
+        type: string
+        default: "COMMENT"
+        description: "Review state: COMMENT, REQUEST_CHANGES, or APPROVE"
+      comments:
+        type: array
+        description: "Inline comments on specific lines"
+        items:
+          type: object
+          required: [path, line, body]
+          properties:
+            path:
+              type: string
+              description: "File path in the diff"
+            line:
+              type: integer
+              description: "Line number in the file"
+            start_line:
+              type: integer
+              description: "Start line for multi-line comments"
+            body:
+              type: string
+              description: "Comment text"
+      commit_id:
+        type: string
+        description: "HEAD SHA of the PR (auto-fetched if omitted)"
+      confirm_approve:
+        type: boolean
+        default: false
+        description: "Required when event=APPROVE (safety gate)"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without posting (default: true)"
+
+  - name: github_add_pr_comment
+    access: write
+    description: >
+      Post a single inline review comment on a PR diff line.
+      Requires the file path and line number within the diff.
+      Defaults to dry_run=true.
+    params:
+      repo:
+        type: string
+        required: true
+        description: "Repository as owner/repo"
+      pr_number:
+        type: integer
+        required: true
+      path:
+        type: string
+        required: true
+        description: "File path in the diff"
+      line:
+        type: integer
+        required: true
+        description: "Line number in the file"
+      body:
+        type: string
+        required: true
+        description: "Comment text (markdown)"
+      commit_id:
+        type: string
+        description: "HEAD SHA of the PR (auto-fetched if omitted)"
+      start_line:
+        type: integer
+        description: "Start line for multi-line comments"
+      side:
+        type: string
+        default: "RIGHT"
+        description: "Diff side: LEFT (deletion) or RIGHT (addition)"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without posting (default: true)"
+
+  - name: github_add_comment
+    access: write
+    description: >
+      Post a conversation comment on an issue or PR (not inline).
+      Uses the issues API which works for both issues and PRs.
+      Defaults to dry_run=true.
+    params:
+      repo:
+        type: string
+        required: true
+        description: "Repository as owner/repo"
+      issue_number:
+        type: integer
+        required: true
+        description: "Issue or PR number"
+      body:
+        type: string
+        required: true
+        description: "Comment body (markdown)"
+      dry_run:
+        type: boolean
+        default: true
+        description: "Preview without posting (default: true)"
+
 setup:
   credentials:
     GITHUB_TOKEN:
@@ -264,8 +381,10 @@ setup:
       instructions: >
         Create a personal access token with repo, read:org, and
         notifications scopes. For fine-grained tokens, grant
-        read access to Issues, Pull Requests, and Metadata (note:
-        notifications require a classic PAT).
+        read access to Issues, Pull Requests, and Metadata for
+        read tools, and write access to Pull Requests and Issues
+        for write tools (reviews, comments). Notifications require
+        a classic PAT.
       secret: true
     GITHUB_URL:
       description: "GitHub API URL (for Enterprise)"
