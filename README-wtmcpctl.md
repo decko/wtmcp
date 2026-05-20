@@ -10,7 +10,7 @@ encryption, and usage statistics.
 make build
 ```
 
-This creates `wtmcpctl` in the `bin/` directory.
+This creates `wtmcpctl` in the repository root.
 
 ## Global Flags
 

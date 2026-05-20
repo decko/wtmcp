@@ -91,7 +91,7 @@ func TestResolveConfigSessionDir(t *testing.T) {
 		if got["_session_dir"] != "/home/user/project" {
 			t.Errorf("_session_dir = %q, want /home/user/project", got["_session_dir"])
 		}
-		want := filepath.Join("/home/user/project", "wtmcp", "google-docs")
+		want := filepath.Join("/home/user/project", ".wtmcp-data", "google-docs")
 		if got["_output_dir"] != want {
 			t.Errorf("_output_dir = %q, want %q", got["_output_dir"], want)
 		}

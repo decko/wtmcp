@@ -106,7 +106,7 @@ class TestValidateReadPath:
 
     def test_relative_in_session_dir(self, tmp_path):
         # Set output_dir to a subdir so session_dir is different
-        subdir = tmp_path / "wtmcp" / "jira"
+        subdir = tmp_path / ".wtmcp-data" / "jira"
         subdir.mkdir(parents=True)
         handler.config["_output_dir"] = str(subdir)
         test_file = tmp_path / "user_file.md"

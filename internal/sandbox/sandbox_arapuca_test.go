@@ -101,13 +101,13 @@ func TestBuildProfileOutputDir(t *testing.T) {
 	m := &Manager{base: base{cfg: testConfig(), dataDir: "/data"}}
 
 	t.Run("output excluded from profile", func(t *testing.T) {
-		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler", OutputDir: "/home/user/project/wtmcp/test"}
+		info := PluginInfo{Name: "test", Dir: "/p", Handler: "./handler", OutputDir: "/home/user/project/.wtmcp-data/test"}
 		profile := m.buildProfile(info)
 		if len(profile.WritePaths) != 2 {
 			t.Fatalf("WritePaths = %v, want 2 entries (tmp + data only)", profile.WritePaths)
 		}
 		for _, p := range profile.ReadPaths {
-			if p == "/home/user/project/wtmcp/test" {
+			if p == "/home/user/project/.wtmcp-data/test" {
 				t.Error("outputDir should NOT be in ReadPaths — all I/O goes through core")
 			}
 		}

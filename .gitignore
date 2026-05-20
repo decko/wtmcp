@@ -24,7 +24,7 @@ uv.lock
 
 # Plugin runtime artifacts
 control/
-/wtmcp/
+/.wtmcp-data/
 
 # Environment
 .env

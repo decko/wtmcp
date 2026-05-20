@@ -47,7 +47,7 @@ func TestPrepareDirs(t *testing.T) {
 func TestPrepareDirsOutputDir(t *testing.T) {
 	tmpBase := t.TempDir()
 	dataBase := t.TempDir()
-	outDir := filepath.Join(t.TempDir(), "wtmcp", "test-plugin")
+	outDir := filepath.Join(t.TempDir(), ".wtmcp-data", "test-plugin")
 
 	t.Setenv("TMPDIR", tmpBase)
 

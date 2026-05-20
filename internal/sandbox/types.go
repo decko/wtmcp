@@ -41,7 +41,7 @@ type base struct {
 
 // TmpDir returns the per-plugin temporary directory path.
 func (b *base) TmpDir(pluginName string) string {
-	return filepath.Join(os.TempDir(), "wtmcp", pluginName)
+	return filepath.Join(os.TempDir(), "wtmcp-data", pluginName)
 }
 
 // DataDir returns the per-plugin persistent data directory path.

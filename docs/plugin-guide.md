@@ -331,7 +331,7 @@ by `id`.
 ```
 Core → Plugin:  {"id": "init-1", "type": "init", "protocol": "1.0",
                   "config": {"_session_dir": "/home/user/project",
-                             "_output_dir": "/home/user/project/wtmcp/myplugin",
+                             "_output_dir": "/home/user/project/.wtmcp-data/myplugin",
                              "_credentials_dir": "/home/user/.config/wtmcp/credentials/mygroup",
                              "MY_API_URL": "https://api.example.com", ...}}
 Plugin → Core:  {"id": "init-1", "type": "init_ok"}
@@ -521,7 +521,7 @@ write the content to tmpdir first, then pass the path:
 ```
 Plugin → Core:  {"id": "fw-2", "type": "file_write",
                   "path": "attachment.bin",
-                  "source_path": "/tmp/wtmcp/plugin/dl-123.tmp",
+                  "source_path": "/tmp/wtmcp-data/plugin/dl-123.tmp",
                   "permissions": "0600"}
 Core → Plugin:  {"id": "fw-2", "type": "file_write_response",
                   "path": "/abs/path/to/attachment.bin",
@@ -975,7 +975,7 @@ The server injects two directory paths into the resolved config:
 - **`_session_dir`**: the user's project directory (the CWD when
   wtmcp started). Plugins can read files from this directory.
 - **`_output_dir`**: a per-plugin output directory at
-  `<session_dir>/wtmcp/<plugin-name>`. Plugins should write output
+  `<session_dir>/.wtmcp-data/<plugin-name>`. Plugins should write output
   files here (exports, reports, downloaded attachments, etc.).
 
 Both values are available in the `config` during init and on each

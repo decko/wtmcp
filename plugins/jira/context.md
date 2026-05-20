@@ -158,7 +158,7 @@ jira_add_attachment(issue_key="PROJ-123",
 
 ### File Export and Local Analysis
 
-Export paths are relative to the output directory (`wtmcp/jira/`).
+Export paths are relative to the output directory (`.wtmcp-data/jira/`).
 Read paths resolve against both the output and session directories:
 ```
 jira_export_sprint_data(board_id="42", sprint_id="123",

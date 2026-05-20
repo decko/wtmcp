@@ -93,7 +93,7 @@ All tools enforce hard limits to prevent token explosion:
 ### Caching for Bulk Processing
 
 `gmail_fetch_and_cache` saves full message data to a local cache
-directory (`wtmcp/google-gmail/cache/`) and returns only the first
+directory (`.wtmcp-data/google-gmail/cache/`) and returns only the first
 10 summaries. Use this when you need to:
 
 - Process many emails without consuming context tokens

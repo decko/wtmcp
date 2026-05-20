@@ -46,7 +46,7 @@ tools:
         description: "Save to local file"
       output_path:
         type: string
-        description: "Custom output path (default: wtmcp/google-docs/<title>.txt)"
+        description: "Custom output path (default: .wtmcp-data/google-docs/<title>.txt)"
 
   - name: gdocs_get_document_markdown
     access: read
@@ -64,7 +64,7 @@ tools:
         description: "Save to local file"
       output_path:
         type: string
-        description: "Custom output path (default: wtmcp/google-docs/<title>.md)"
+        description: "Custom output path (default: .wtmcp-data/google-docs/<title>.md)"
 
   - name: gdocs_summarize_document
     access: read

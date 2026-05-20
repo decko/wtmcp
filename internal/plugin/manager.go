@@ -25,6 +25,8 @@ import (
 	"github.com/LeGambiArt/wtmcp/internal/secrets/vault"
 )
 
+const dataDir = ".wtmcp-data"
+
 // DisabledPlugin records a plugin that was discovered but could not
 // be loaded due to a configuration issue (e.g., env.d file with bad
 // permissions). Its tools are registered with [DISABLED] descriptions
@@ -767,7 +769,7 @@ func (m *Manager) preparePlugin(ctx context.Context, name string) (*Handle, erro
 	handle.resolvedConfig = cfgJSON
 	handle.sessionDir = m.sessionDir
 	if m.sessionDir != "" {
-		handle.outputDir = filepath.Join(m.sessionDir, "wtmcp", name)
+		handle.outputDir = filepath.Join(m.sessionDir, dataDir, name)
 	}
 	if m.sbMgr != nil {
 		handle.SetSandbox(m.sbMgr)
@@ -1129,7 +1131,7 @@ func (m *Manager) resolveConfig(name string, manifest *Manifest) map[string]stri
 	}
 	if m.sessionDir != "" {
 		resolved["_session_dir"] = m.sessionDir
-		resolved["_output_dir"] = filepath.Join(m.sessionDir, "wtmcp", name)
+		resolved["_output_dir"] = filepath.Join(m.sessionDir, dataDir, name)
 	}
 	if name == "testing-farm" {
 		if keys := discoverSSHPublicKeys(); keys != "" {
